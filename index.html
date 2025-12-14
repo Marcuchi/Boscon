@@ -23,6 +23,15 @@
         scrollbar-width: none;
       }
     </style>
+    <!-- Polyfill para environment variables en modo sin build -->
+    <script>
+      window.process = {
+        env: {
+          // TODO: REEMPLAZA ESTO CON TU API KEY REAL DE GEMINI SI LA VAS A USAR
+          API_KEY: "" 
+        }
+      };
+    </script>
   <script type="importmap">
 {
   "imports": {
