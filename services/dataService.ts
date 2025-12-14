@@ -65,16 +65,23 @@ export const initializeData = async () => {
 
 // --- REAL-TIME SUBSCRIPTIONS ---
 
-export const subscribeToUsers = (callback: (users: User[]) => void) => {
+// MODIFICADO: Ahora acepta un segundo callback para errores
+export const subscribeToUsers = (callback: (users: User[]) => void, onError?: (error: any) => void) => {
   const q = query(collection(db, USERS_COLLECTION));
-  return onSnapshot(q, (snapshot) => {
-    const users: User[] = [];
-    snapshot.forEach((doc) => {
-      users.push({ ...doc.data(), id: doc.id } as User);
-    });
-    cachedUsers = users; // Keep local cache updated
-    callback(users);
-  });
+  return onSnapshot(q, 
+    (snapshot) => {
+      const users: User[] = [];
+      snapshot.forEach((doc) => {
+        users.push({ ...doc.data(), id: doc.id } as User);
+      });
+      cachedUsers = users; // Keep local cache updated
+      callback(users);
+    }, 
+    (error) => {
+      console.error("Error subscribing to users:", error);
+      if (onError) onError(error);
+    }
+  );
 };
 
 export const subscribeToTasks = (callback: (tasks: Task[]) => void) => {
