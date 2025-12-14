@@ -1,6 +1,20 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Initialize lazily to avoid top-level crashes if API Key is missing
+const getAiClient = () => {
+  try {
+    // @ts-ignore - Vite replaces process.env.API_KEY with the string value
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+      console.warn("Google GenAI API Key is missing.");
+      return null;
+    }
+    return new GoogleGenAI({ apiKey });
+  } catch (e) {
+    console.error("Failed to initialize Google GenAI client:", e);
+    return null;
+  }
+};
 
 interface GeneratedTask {
   title: string;
@@ -10,6 +24,13 @@ interface GeneratedTask {
 
 export const generateChecklistForRole = async (roleName: string): Promise<GeneratedTask[]> => {
   try {
+    const ai = getAiClient();
+    if (!ai) {
+      // Simulate a small delay to make UI feel responsive even if failing
+      await new Promise(r => setTimeout(r, 500)); 
+      return [];
+    }
+
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: `Generate a checklist of 5 essential tasks for a "${roleName}" in a business environment. Mix daily and weekly tasks. The language must be Spanish.`,
