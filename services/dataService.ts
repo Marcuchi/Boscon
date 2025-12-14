@@ -10,7 +10,9 @@ import {
   query, 
   where, 
   getDocs,
-  writeBatch
+  writeBatch,
+  setDoc,
+  getDoc
 } from "firebase/firestore";
 
 const USERS_COLLECTION = 'users';
@@ -37,10 +39,6 @@ export const initializeData = async () => {
       console.log("Seeding Database with Initial Users...");
       const batch = writeBatch(db);
       INITIAL_USERS.forEach(user => {
-        // Use custom IDs for initial users if possible, or let Firestore generate
-        // For simplicity with our 'id' field, we store the ID as a field and also use it as doc ID if valid, or just let doc ID be separate.
-        // To match current logic where ID is string, we'll let Firestore generate IDs or use the provided ones.
-        // For 'verifyPin' to work easily with our mock data, let's keep the mock IDs.
         const userRef = doc(db, USERS_COLLECTION, user.id); 
         batch.set(userRef, user);
       });
@@ -89,12 +87,9 @@ export const subscribeToTasks = (callback: (tasks: Task[]) => void) => {
 // --- CRUD OPERATIONS ---
 
 export const addUser = async (user: User) => {
-  // We allow Firestore to generate ID if it's random, or use the one provided
-  // In the UI we generate a random string ID. Let's use that as the doc ID.
-  await updateDoc(doc(collection(db, USERS_COLLECTION), user.id), undefined) // check existence? No, just set.
-  // Actually simpler:
+  // We utilize setDoc to enforce the ID if provided, or allow addDoc if we wanted auto-id (not used here)
   if(user.id) {
-     await import("firebase/firestore").then(m => m.setDoc(doc(db, USERS_COLLECTION, user.id), user));
+     await setDoc(doc(db, USERS_COLLECTION, user.id), user);
   } else {
      await addDoc(collection(db, USERS_COLLECTION), user);
   }
@@ -114,7 +109,7 @@ export const deleteUser = async (userId: string) => {
 export const saveTask = async (task: Task) => {
   const taskRef = doc(db, TASKS_COLLECTION, task.id);
   // We use setDoc with merge: true to handle both create (if id exists) and update
-  await import("firebase/firestore").then(m => m.setDoc(taskRef, task, { merge: true }));
+  await setDoc(taskRef, task, { merge: true });
   return task;
 };
 
@@ -123,21 +118,15 @@ export const deleteTask = async (taskId: string) => {
 }
 
 export const toggleTaskCompletion = async (taskId: string) => {
-    // We need to fetch the task first to check its current state, 
-    // BUT since we are likely inside a UI that has the task data, 
-    // ideally we pass the task object. To keep signature simple we fetch.
-    // Optimization: The UI usually listens to changes, so we can just update.
-    
-    // However, logic requires knowing 'lastCompletedDate'. 
-    // Let's do a transaction or just read-write.
     const ref = doc(db, TASKS_COLLECTION, taskId);
-    const snap = await import("firebase/firestore").then(m => m.getDoc(ref));
+    const snap = await getDoc(ref);
     
     if (snap.exists()) {
         const task = snap.data() as Task;
         const today = new Date().toISOString().split('T')[0];
         let newDate: string | null = today;
         
+        // Toggle logic
         if (task.lastCompletedDate === today) {
             newDate = null;
         }
@@ -158,7 +147,7 @@ export const verifyPin = async (pin: string): Promise<User | null> => {
   return null;
 };
 
-// --- LOGIC HELPERS (Pure functions, no DB change needed) ---
+// --- LOGIC HELPERS ---
 
 export const getMondayOfWeek = (dateStr: string) => {
     const [y, m, d] = dateStr.split('-').map(Number);
