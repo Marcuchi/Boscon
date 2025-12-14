@@ -23,11 +23,12 @@
         scrollbar-width: none;
       }
     </style>
-    <!-- Polyfill para environment variables en modo sin build -->
+    <!-- Polyfill para environment variables para compatibilidad con el código existente -->
     <script>
       window.process = {
         env: {
-          // TODO: REEMPLAZA ESTO CON TU API KEY REAL DE GEMINI SI LA VAS A USAR
+          // Si usas Vercel, es mejor configurar esta variable en el dashboard de Vercel (Settings > Environment Variables)
+          // como VITE_API_KEY y usar import.meta.env.VITE_API_KEY, pero este polyfill mantendrá el código actual funcionando.
           API_KEY: "" 
         }
       };
@@ -35,16 +36,20 @@
   <script type="importmap">
 {
   "imports": {
-    "@google/genai": "https://esm.sh/@google/genai@^1.33.0",
     "react/": "https://esm.sh/react@^19.2.3/",
     "react": "https://esm.sh/react@^19.2.3",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "firebase/": "https://esm.sh/firebase@^12.6.0/"
+    "@google/genai": "https://esm.sh/@google/genai@^1.33.0",
+    "firebase/": "https://esm.sh/firebase@^12.6.0/",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "vite": "https://esm.sh/vite@^7.2.7"
   }
 }
 </script>
 </head>
   <body>
     <div id="root"></div>
+    <!-- ESTA LÍNEA ES CRITICA: Carga tu aplicación -->
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>
