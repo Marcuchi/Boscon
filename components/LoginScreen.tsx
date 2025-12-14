@@ -2,13 +2,6 @@ import React, { useState } from 'react';
 import { verifyPin } from '../services/dataService';
 import { User } from '../types';
 
-// Memoized Background component to prevent re-rendering heavy blur effects on every keystroke
-const BackgroundAmbience = React.memo(() => (
-  <div className="absolute inset-0 overflow-hidden pointer-events-none">
-     <div className="absolute top-[-20%] left-[-20%] w-[140%] h-[50%] bg-blue-900/20 blur-[100px] rounded-full" />
-  </div>
-));
-
 interface LoginScreenProps {
   onLogin: (user: User) => void;
 }
@@ -26,10 +19,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
     setError(false);
 
     try {
-        // Force a small delay to allow UI to show loading state if verifyPin is too fast (cached)
-        // or to throttle rapid submissions
-        await new Promise(r => requestAnimationFrame(r));
-        
+        // Optimized: Removed artificial delay for snappy feel
         const user = await verifyPin(password);
         if (user) {
           onLogin(user);
@@ -46,16 +36,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="h-screen w-full bg-[#1c1c1e] text-white flex flex-col items-center justify-center py-10 px-6 overflow-hidden relative">
+    // Replaced heavy blur effects with a performant radial gradient
+    <div className="h-screen w-full bg-slate-900 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-800 via-slate-900 to-black text-white flex flex-col items-center justify-center py-10 px-6 overflow-hidden relative">
       
-      {/* Optimized Background */}
-      <BackgroundAmbience />
-
-      <div className="flex-1 flex flex-col items-center justify-center w-full max-w-sm z-10">
+      <div className="flex-1 flex flex-col items-center justify-center w-full max-w-sm z-10 animate-[fadeIn_0.5s_ease-out]">
           {/* Logo / Avatar */}
           <div className="mb-10 relative group">
-              <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-              <div className="w-28 h-28 rounded-3xl overflow-hidden shadow-2xl border border-white/10 relative">
+              <div className="w-28 h-28 rounded-[2rem] overflow-hidden shadow-2xl border border-white/10 relative bg-white/5">
                   <img 
                     src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTmf3SKqXHbDSUx84ijPnHgqampfkEGRjUt_A&s" 
                     className="w-full h-full object-cover" 
@@ -68,9 +55,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           <p className="text-gray-400 mb-8 text-sm">Ingresa tu contraseña para continuar</p>
 
           <form onSubmit={handleSubmit} className="w-full space-y-4">
-              <div className="relative">
+              <div className="relative group">
                   <input
-                    type="password" // Use type="tel" or "number" with pattern if you want numeric keypad on mobile, but password is safer for masking
+                    type="password"
                     inputMode="numeric"
                     pattern="[0-9]*"
                     value={password}
@@ -79,13 +66,18 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                         setError(false);
                     }}
                     disabled={isLoading}
-                    className={`w-full bg-white/10 border ${error ? 'border-red-500/50 text-red-100' : 'border-white/10 focus:border-blue-500/50'} rounded-2xl px-5 py-4 text-center text-lg placeholder-gray-500 outline-none transition-all focus:bg-white/15`}
-                    placeholder="Contraseña"
+                    className={`
+                        w-full bg-white/10 border backdrop-blur-md
+                        ${error ? 'border-red-500/50 text-red-100' : 'border-white/10 focus:border-blue-500/50'} 
+                        rounded-2xl px-5 py-4 text-center text-lg placeholder-gray-500 
+                        outline-none transition-all duration-200 focus:bg-white/15 focus:scale-[1.02]
+                    `}
+                    placeholder="PIN de acceso"
                     autoFocus
                     autoComplete="off"
                   />
                   {error && (
-                      <div className="absolute inset-y-0 right-4 flex items-center animate-[fadeIn_0.2s]">
+                      <div className="absolute inset-y-0 right-4 flex items-center animate-[shake_0.5s]">
                           <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                       </div>
                   )}
@@ -94,7 +86,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               <button
                 type="submit"
                 disabled={!password || isLoading}
-                className={`w-full py-4 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${password ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-900/20' : 'bg-white/5 text-gray-500 cursor-not-allowed'}`}
+                className={`
+                    w-full py-4 rounded-2xl font-bold text-lg transition-all duration-200 flex items-center justify-center gap-2
+                    ${password 
+                        ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-900/40 active:scale-[0.98]' 
+                        : 'bg-white/5 text-gray-500 cursor-not-allowed'
+                    }
+                `}
               >
                   {isLoading ? (
                       <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -106,8 +104,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           </form>
       </div>
 
-      <div className="text-xs text-gray-600 font-mono mt-8 z-10">
-         Admin: boscon2025 | Juan: 1111
+      <div className="text-xs text-gray-600 font-mono mt-8 z-10 opacity-60">
+         Admin: boscon2025 | Empleado: 1111
       </div>
     </div>
   );
