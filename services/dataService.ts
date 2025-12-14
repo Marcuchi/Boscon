@@ -17,6 +17,8 @@ import {
 
 const USERS_COLLECTION = 'users';
 const TASKS_COLLECTION = 'tasks';
+const LOCAL_USERS_KEY = 'boscon_local_users';
+const LOCAL_TASKS_KEY = 'boscon_local_tasks';
 
 // Initial Mock Data for Seeding
 const INITIAL_USERS: User[] = [
@@ -31,123 +33,218 @@ const INITIAL_TASKS: Task[] = [
   { id: 't3', title: 'Revisar temperaturas', description: 'Verificar termostatos de neveras 1, 2 y congelador.', assignedToUserId: 'u3', frequency: 'DAILY', repeatDays: [0,1,2,3,4,5,6], lastCompletedDate: null, createdAt: Date.now() },
 ];
 
+// --- LOCAL STORAGE HELPERS ---
+const getLocalData = <T>(key: string, defaultData: T[]): T[] => {
+    const data = localStorage.getItem(key);
+    if (!data) {
+        localStorage.setItem(key, JSON.stringify(defaultData));
+        return defaultData;
+    }
+    return JSON.parse(data);
+};
+
+const setLocalData = (key: string, data: any[]) => {
+    localStorage.setItem(key, JSON.stringify(data));
+    // Dispatch custom event for "reactivity" in same tab
+    window.dispatchEvent(new Event('local-db-update'));
+};
+
 // --- SEED DATABASE ---
 export const initializeData = async () => {
-  try {
-    const usersSnap = await getDocs(collection(db, USERS_COLLECTION));
-    if (usersSnap.empty) {
-      console.log("Seeding Database with Initial Users...");
-      const batch = writeBatch(db);
-      INITIAL_USERS.forEach(user => {
-        const userRef = doc(db, USERS_COLLECTION, user.id); 
-        batch.set(userRef, user);
-      });
-      await batch.commit();
-    }
+  if (db) {
+      // FIREBASE MODE
+      try {
+        const usersSnap = await getDocs(collection(db, USERS_COLLECTION));
+        if (usersSnap.empty) {
+          const batch = writeBatch(db);
+          INITIAL_USERS.forEach(user => {
+            const userRef = doc(db, USERS_COLLECTION, user.id); 
+            batch.set(userRef, user);
+          });
+          await batch.commit();
+        }
 
-    const tasksSnap = await getDocs(collection(db, TASKS_COLLECTION));
-    if (tasksSnap.empty) {
-      console.log("Seeding Database with Initial Tasks...");
-      const batch = writeBatch(db);
-      INITIAL_TASKS.forEach(task => {
-         const taskRef = doc(db, TASKS_COLLECTION, task.id);
-         batch.set(taskRef, task);
-      });
-      await batch.commit();
-    }
-  } catch (e) {
-    console.error("Error seeding data (Check your Firebase Config):", e);
+        const tasksSnap = await getDocs(collection(db, TASKS_COLLECTION));
+        if (tasksSnap.empty) {
+          const batch = writeBatch(db);
+          INITIAL_TASKS.forEach(task => {
+             const taskRef = doc(db, TASKS_COLLECTION, task.id);
+             batch.set(taskRef, task);
+          });
+          await batch.commit();
+        }
+      } catch (e) {
+        console.error("Error seeding Firebase:", e);
+      }
+  } else {
+      // LOCAL MODE
+      if (!localStorage.getItem(LOCAL_USERS_KEY)) {
+          setLocalData(LOCAL_USERS_KEY, INITIAL_USERS);
+      }
+      if (!localStorage.getItem(LOCAL_TASKS_KEY)) {
+          setLocalData(LOCAL_TASKS_KEY, INITIAL_TASKS);
+      }
   }
 };
 
 // --- REAL-TIME SUBSCRIPTIONS ---
 
 export const subscribeToUsers = (callback: (users: User[]) => void) => {
-  const q = query(collection(db, USERS_COLLECTION));
-  return onSnapshot(q, (snapshot) => {
-    const users: User[] = [];
-    snapshot.forEach((doc) => {
-      users.push({ ...doc.data(), id: doc.id } as User);
-    });
-    callback(users);
-  });
+  if (db) {
+      // Firebase
+      const q = query(collection(db, USERS_COLLECTION));
+      return onSnapshot(q, (snapshot) => {
+        const users: User[] = [];
+        snapshot.forEach((doc) => {
+          users.push({ ...doc.data(), id: doc.id } as User);
+        });
+        callback(users);
+      });
+  } else {
+      // Local Storage
+      const read = () => callback(getLocalData<User>(LOCAL_USERS_KEY, INITIAL_USERS));
+      read();
+      
+      const listener = () => read();
+      window.addEventListener('local-db-update', listener);
+      return () => window.removeEventListener('local-db-update', listener);
+  }
 };
 
 export const subscribeToTasks = (callback: (tasks: Task[]) => void) => {
-  const q = query(collection(db, TASKS_COLLECTION));
-  return onSnapshot(q, (snapshot) => {
-    const tasks: Task[] = [];
-    snapshot.forEach((doc) => {
-      tasks.push({ ...doc.data(), id: doc.id } as Task);
-    });
-    callback(tasks);
-  });
+  if (db) {
+      // Firebase
+      const q = query(collection(db, TASKS_COLLECTION));
+      return onSnapshot(q, (snapshot) => {
+        const tasks: Task[] = [];
+        snapshot.forEach((doc) => {
+          tasks.push({ ...doc.data(), id: doc.id } as Task);
+        });
+        callback(tasks);
+      });
+  } else {
+      // Local Storage
+      const read = () => callback(getLocalData<Task>(LOCAL_TASKS_KEY, INITIAL_TASKS));
+      read();
+      
+      const listener = () => read();
+      window.addEventListener('local-db-update', listener);
+      return () => window.removeEventListener('local-db-update', listener);
+  }
 };
 
 // --- CRUD OPERATIONS ---
 
 export const addUser = async (user: User) => {
-  // We utilize setDoc to enforce the ID if provided, or allow addDoc if we wanted auto-id (not used here)
-  if(user.id) {
-     await setDoc(doc(db, USERS_COLLECTION, user.id), user);
+  if (db) {
+      if(user.id) {
+         await setDoc(doc(db, USERS_COLLECTION, user.id), user);
+      } else {
+         await addDoc(collection(db, USERS_COLLECTION), user);
+      }
   } else {
-     await addDoc(collection(db, USERS_COLLECTION), user);
+      const users = getLocalData<User>(LOCAL_USERS_KEY, []);
+      users.push(user);
+      setLocalData(LOCAL_USERS_KEY, users);
   }
 };
 
 export const deleteUser = async (userId: string) => {
-  await deleteDoc(doc(db, USERS_COLLECTION, userId));
-  
-  // Cleanup tasks
-  const q = query(collection(db, TASKS_COLLECTION), where("assignedToUserId", "==", userId));
-  const snap = await getDocs(q);
-  const batch = writeBatch(db);
-  snap.forEach(d => batch.delete(d.ref));
-  await batch.commit();
+  if (db) {
+      await deleteDoc(doc(db, USERS_COLLECTION, userId));
+      // Cleanup tasks
+      const q = query(collection(db, TASKS_COLLECTION), where("assignedToUserId", "==", userId));
+      const snap = await getDocs(q);
+      const batch = writeBatch(db);
+      snap.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+  } else {
+      const users = getLocalData<User>(LOCAL_USERS_KEY, []);
+      setLocalData(LOCAL_USERS_KEY, users.filter(u => u.id !== userId));
+      
+      // Cleanup tasks
+      let tasks = getLocalData<Task>(LOCAL_TASKS_KEY, []);
+      tasks = tasks.filter(t => t.assignedToUserId !== userId);
+      setLocalData(LOCAL_TASKS_KEY, tasks);
+  }
 };
 
 export const saveTask = async (task: Task) => {
-  const taskRef = doc(db, TASKS_COLLECTION, task.id);
-  // We use setDoc with merge: true to handle both create (if id exists) and update
-  await setDoc(taskRef, task, { merge: true });
+  if (db) {
+      const taskRef = doc(db, TASKS_COLLECTION, task.id);
+      await setDoc(taskRef, task, { merge: true });
+  } else {
+      let tasks = getLocalData<Task>(LOCAL_TASKS_KEY, []);
+      const index = tasks.findIndex(t => t.id === task.id);
+      if (index >= 0) {
+          tasks[index] = task;
+      } else {
+          tasks.push(task);
+      }
+      setLocalData(LOCAL_TASKS_KEY, tasks);
+  }
   return task;
 };
 
 export const deleteTask = async (taskId: string) => {
-  await deleteDoc(doc(db, TASKS_COLLECTION, taskId));
+  if (db) {
+      await deleteDoc(doc(db, TASKS_COLLECTION, taskId));
+  } else {
+      const tasks = getLocalData<Task>(LOCAL_TASKS_KEY, []);
+      setLocalData(LOCAL_TASKS_KEY, tasks.filter(t => t.id !== taskId));
+  }
 }
 
 export const toggleTaskCompletion = async (taskId: string) => {
-    const ref = doc(db, TASKS_COLLECTION, taskId);
-    const snap = await getDoc(ref);
-    
-    if (snap.exists()) {
-        const task = snap.data() as Task;
-        const today = new Date().toISOString().split('T')[0];
-        let newDate: string | null = today;
+    if (db) {
+        const ref = doc(db, TASKS_COLLECTION, taskId);
+        const snap = await getDoc(ref);
         
-        // Toggle logic
-        if (task.lastCompletedDate === today) {
-            newDate = null;
+        if (snap.exists()) {
+            const task = snap.data() as Task;
+            const today = new Date().toISOString().split('T')[0];
+            let newDate: string | null = today;
+            
+            if (task.lastCompletedDate === today) {
+                newDate = null;
+            }
+            
+            await updateDoc(ref, { lastCompletedDate: newDate });
+            return { ...task, lastCompletedDate: newDate };
         }
-        
-        await updateDoc(ref, { lastCompletedDate: newDate });
-        return { ...task, lastCompletedDate: newDate };
+        return null;
+    } else {
+        const tasks = getLocalData<Task>(LOCAL_TASKS_KEY, []);
+        const task = tasks.find(t => t.id === taskId);
+        if (task) {
+            const today = new Date().toISOString().split('T')[0];
+            let newDate: string | null = today;
+            if (task.lastCompletedDate === today) newDate = null;
+            
+            task.lastCompletedDate = newDate;
+            setLocalData(LOCAL_TASKS_KEY, tasks);
+            return task;
+        }
+        return null;
     }
-    return null;
 };
 
 export const verifyPin = async (pin: string): Promise<User | null> => {
-  const q = query(collection(db, USERS_COLLECTION), where("pin", "==", pin));
-  const snap = await getDocs(q);
-  if (!snap.empty) {
-    const d = snap.docs[0];
-    return { ...d.data(), id: d.id } as User;
+  if (db) {
+      const q = query(collection(db, USERS_COLLECTION), where("pin", "==", pin));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const d = snap.docs[0];
+        return { ...d.data(), id: d.id } as User;
+      }
+      return null;
+  } else {
+      const users = getLocalData<User>(LOCAL_USERS_KEY, INITIAL_USERS);
+      return users.find(u => u.pin === pin) || null;
   }
-  return null;
 };
 
-// --- LOGIC HELPERS ---
+// --- LOGIC HELPERS (Shared) ---
 
 export const getMondayOfWeek = (dateStr: string) => {
     const [y, m, d] = dateStr.split('-').map(Number);
