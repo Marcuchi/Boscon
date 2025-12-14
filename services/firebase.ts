@@ -2,20 +2,15 @@ import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
 // --- CONFIGURACIÓN DE FIREBASE ---
-// 1. Ve a https://console.firebase.google.com/
-// 2. Crea un proyecto nuevo.
-// 3. Agrega una app web.
-// 4. Copia la configuración SDK y pégala abajo.
-// 5. Ve a "Firestore Database" -> "Crear base de datos" -> Selecciona "Modo de prueba" (Test mode) para empezar.
-
+// Credenciales del proyecto 'boscon-ab229'
 const firebaseConfig = {
-  // REEMPLAZA ESTO CON TUS CLAVES REALES DE FIREBASE
-  apiKey: "TU_API_KEY_AQUI",
-  authDomain: "tu-proyecto.firebaseapp.com",
-  projectId: "tu-proyecto",
-  storageBucket: "tu-proyecto.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abcdef"
+  apiKey: "AIzaSyAg3l6qEmcxHB-x37pH9SRNwr5bvWm4RIs",
+  authDomain: "boscon-ab229.firebaseapp.com",
+  databaseURL: "https://boscon-ab229-default-rtdb.firebaseio.com",
+  projectId: "boscon-ab229",
+  storageBucket: "boscon-ab229.firebasestorage.app",
+  messagingSenderId: "751218072036",
+  appId: "1:751218072036:web:a78ca7bdc94e8cebcbcff1"
 };
 
 // Initialize Firebase
