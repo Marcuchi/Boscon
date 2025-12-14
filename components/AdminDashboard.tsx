@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Task, UserRole, TaskFrequency } from '../types';
 import { subscribeToUsers, subscribeToTasks, saveTask, deleteTask, addUser, deleteUser, isTaskCompletedForDate, isTaskVisibleOnDate, getMondayOfWeek } from '../services/dataService';
-import { generateChecklistForRole } from '../services/geminiService';
-import { PlusIcon, TrashIcon, LogoutIcon, PencilIcon, EllipsisHorizontalIcon, ChevronRightIcon, XMarkIcon, UserIcon, SparklesIcon } from './ui/Icons';
+import { PlusIcon, TrashIcon, LogoutIcon, PencilIcon, EllipsisHorizontalIcon, ChevronRightIcon, XMarkIcon, UserIcon } from './ui/Icons';
 
 interface AdminDashboardProps {
   currentUser: User;
@@ -122,7 +121,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const [newTaskDescription, setNewTaskDescription] = useState('');
   const [taskFrequency, setTaskFrequency] = useState<TaskFrequency>('DAILY');
   const [selectedDays, setSelectedDays] = useState<number[]>([]); 
-  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
 
   // Form States (User)
   const [newUserName, setNewUserName] = useState('');
@@ -210,34 +208,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
     await saveTask(newTask); // Async
     setShowAddModal(false);
     setEditingTask(null);
-  };
-
-  const handleGenerateAI = async () => {
-      if (!selectedUser?.position) return;
-      setIsGeneratingAI(true);
-      try {
-          // Generate suggestions based on the user's position
-          const suggestions = await generateChecklistForRole(selectedUser.position);
-          
-          if (suggestions && suggestions.length > 0) {
-              // Pick a random one or the first one to pre-fill
-              const suggestion = suggestions[0];
-              setNewTaskTitle(suggestion.title);
-              setNewTaskDescription(suggestion.description);
-              setTaskFrequency(suggestion.frequency as TaskFrequency);
-              if (suggestion.frequency === 'DAILY') {
-                  setSelectedDays([0,1,2,3,4,5,6]); // Default to everyday for daily suggestions
-              } else {
-                  setSelectedDays([]);
-              }
-          } else {
-              alert('No se pudieron generar sugerencias. Intenta de nuevo.');
-          }
-      } catch (error) {
-          console.error("AI Error:", error);
-      } finally {
-          setIsGeneratingAI(false);
-      }
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -663,30 +633,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
         {/* 1. Add/Edit Task Modal */}
         <ResponsiveModal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title={editingTask ? 'Editar Tarea' : 'Nueva Tarea'}>
              <div className="space-y-5">
-                 {/* AI Generator Button - Only for new tasks */}
-                 {!editingTask && selectedUser?.position && (
-                     <button 
-                        onClick={handleGenerateAI}
-                        disabled={isGeneratingAI}
-                        className="w-full relative overflow-hidden group bg-gradient-to-r from-purple-500 to-indigo-600 text-white p-3 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-purple-500/20 active:scale-95 transition-all"
-                     >
-                        {isGeneratingAI ? (
-                            <div className="flex items-center gap-2">
-                                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                </svg>
-                                <span>Generando para {selectedUser.position}...</span>
-                            </div>
-                        ) : (
-                            <>
-                                <SparklesIcon className="w-5 h-5" />
-                                <span className="font-semibold">Sugerir tarea con IA</span>
-                            </>
-                        )}
-                     </button>
-                 )}
-
+                 
                  <div>
                      <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Título</label>
                      <input 

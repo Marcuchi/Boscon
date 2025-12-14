@@ -13,10 +13,6 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 3000
-    },
-    define: {
-      // Inject API_KEY for Google GenAI SDK which relies on process.env
-      'process.env.API_KEY': JSON.stringify(env.API_KEY)
     }
   };
 });
