@@ -13,67 +13,49 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [isVerifying, setIsVerifying] = useState(false);
 
-  // Carga de datos silenciosa (sin bloquear UI)
+  // 1. Carga de datos UNA SOLA VEZ al iniciar el componente.
+  // IMPORTANTE: Array de dependencias vacío [] para evitar bucles infinitos.
   useEffect(() => {
     const unsubscribe = subscribeToUsers(
         (data) => {
             setUsers(data);
             setIsLoadingData(false);
-            // Si el usuario ya escribió el PIN mientras cargaba, verificamos ahora
-            if (pin.length >= 4) {
-                verifyPin(pin, data);
-            }
         },
         (err) => console.error("Error connection", err)
     );
     return () => unsubscribe();
-  }, [pin]);
+  }, []);
 
-  // Manejo de entrada
-  const handleNumPadPress = (num: string) => {
-    if (pin.length < 6 && !isVerifying) { // Permitimos hasta 6, aunque validamos al 4 o mas
-        const newPin = pin + num;
-        setPin(newPin);
-        setError(false);
-        
-        // Auto-submit si tiene longitud de 4 o más y tenemos usuarios
-        // (Asumimos pines de 4 dígitos para la mayoría, pero el sistema soporta más)
-        if (users.length > 0) {
-             const exactMatch = users.find(u => u.pin === newPin);
-             if (exactMatch) {
-                 verifyPin(newPin, users);
-             } else if (newPin.length >= 4) {
-                 // Si llegamos a 4 y no coincide, esperamos un momento por si es un pin de 6 digitos
-                 // O si el usuario deja de escribir. Pero para UX rápida, validamos el intento en 4
-                 // si no existe pin de 4, quizas sea de mas.
-                 // Para este demo, asumiremos validación directa si coincide.
-             }
+  // 2. Efecto para verificar el PIN automáticamente cuando cambia.
+  useEffect(() => {
+    if (pin.length >= 4 && users.length > 0 && !isVerifying) {
+        const user = users.find(u => u.pin === pin);
+        if (user) {
+            setIsVerifying(true);
+            // Pequeña pausa estética para mostrar éxito antes de cambiar pantalla
+            setTimeout(() => {
+                onLogin(user);
+            }, 300);
+        } else if (pin.length >= 6) {
+             // Si llegamos a 6 dígitos y no hay coincidencia, es error seguro.
+             // Para 4 dígitos esperamos un poco por si el usuario sigue escribiendo.
+             triggerError();
         }
+    }
+  }, [pin, users]);
+
+  const handleNumPadPress = (num: string) => {
+    if (pin.length < 6 && !isVerifying) {
+        setPin(prev => prev + num);
+        setError(false);
     }
   };
 
-  const verifyPin = (inputPin: string, userList: User[]) => {
-      setIsVerifying(true);
-      // Pequeño delay artificial para sensación de proceso si es muy rápido
-      setTimeout(() => {
-          const user = userList.find(u => u.pin === inputPin);
-          if (user) {
-              onLogin(user);
-          } else {
-              // Si el pin tiene 4 o más caracteres y no coincide, mostramos error
-              // Si tiene menos, seguimos dejando escribir (caso raro en esta lógica)
-              if (inputPin.length >= 4) {
-                  triggerError();
-              } else {
-                  setIsVerifying(false);
-              }
-          }
-      }, 300);
-  };
-
   const triggerError = () => {
-      setIsVerifying(false);
       setError(true);
+      // Vibración si es móvil
+      if (navigator.vibrate) navigator.vibrate(200);
+      
       setTimeout(() => {
           setPin('');
           setError(false);
@@ -82,7 +64,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
   const handleDelete = () => {
       if (pin.length > 0 && !isVerifying) {
-          setPin(pin.slice(0, -1));
+          setPin(prev => prev.slice(0, -1));
           setError(false);
       }
   };
@@ -157,7 +139,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               <button
                 key={num}
                 onClick={() => handleNumPadPress(num.toString())}
-                className="w-[75px] h-[75px] rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 active:bg-white/30 transition-all duration-150 flex items-center justify-center text-3xl font-light text-white border border-white/5 shadow-lg"
+                className="w-[75px] h-[75px] rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 active:bg-white/30 transition-all duration-150 flex items-center justify-center text-3xl font-light text-white border border-white/5 shadow-lg select-none"
               >
                   {num}
               </button>
@@ -168,14 +150,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
           <button
             onClick={() => handleNumPadPress('0')}
-            className="w-[75px] h-[75px] rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 active:bg-white/30 transition-all duration-150 flex items-center justify-center text-3xl font-light text-white border border-white/5 shadow-lg"
+            className="w-[75px] h-[75px] rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 active:bg-white/30 transition-all duration-150 flex items-center justify-center text-3xl font-light text-white border border-white/5 shadow-lg select-none"
           >
               0
           </button>
 
           <button
             onClick={handleDelete}
-            className="w-[75px] h-[75px] flex items-center justify-center text-white/80 active:text-white transition-colors"
+            className="w-[75px] h-[75px] flex items-center justify-center text-white/80 active:text-white transition-colors select-none"
           >
               {pin.length > 0 ? (
                   <span className="text-sm font-semibold tracking-wide">Borrar</span>
