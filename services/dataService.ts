@@ -1,5 +1,5 @@
 import { User, Task, UserRole } from '../types';
-import { db } from './firebase';
+import { db } from './firebase'; // Importa la instancia de Firestore configurada
 import { 
   collection, 
   addDoc, 
@@ -12,7 +12,8 @@ import {
   getDocs,
   writeBatch,
   setDoc,
-  getDoc
+  getDoc,
+  limit
 } from "firebase/firestore";
 
 const USERS_COLLECTION = 'users';
@@ -31,13 +32,16 @@ const INITIAL_TASKS: Task[] = [
   { id: 't3', title: 'Revisar temperaturas', description: 'Verificar termostatos de neveras 1, 2 y congelador.', assignedToUserId: 'u3', frequency: 'DAILY', repeatDays: [0,1,2,3,4,5,6], lastCompletedDate: null, createdAt: Date.now() },
 ];
 
-// Cache local para operaciones síncronas rápidas (opcional)
 let cachedUsers: User[] = [];
 
 // --- SEED DATABASE ---
 export const initializeData = async () => {
   try {
-    const usersSnap = await getDocs(collection(db, USERS_COLLECTION));
+    // Optimización: Usamos limit(1) para verificar existencia rápidamente sin descargar todo
+    const usersRef = collection(db, USERS_COLLECTION);
+    const q = query(usersRef, limit(1));
+    const usersSnap = await getDocs(q);
+    
     if (usersSnap.empty) {
       console.log("Seeding Users...");
       const batch = writeBatch(db);
@@ -48,7 +52,10 @@ export const initializeData = async () => {
       await batch.commit();
     }
 
-    const tasksSnap = await getDocs(collection(db, TASKS_COLLECTION));
+    const tasksRef = collection(db, TASKS_COLLECTION);
+    const qTasks = query(tasksRef, limit(1));
+    const tasksSnap = await getDocs(qTasks);
+
     if (tasksSnap.empty) {
       console.log("Seeding Tasks...");
       const batch = writeBatch(db);
@@ -65,16 +72,16 @@ export const initializeData = async () => {
 
 // --- REAL-TIME SUBSCRIPTIONS ---
 
-// MODIFICADO: Ahora acepta un segundo callback para errores
 export const subscribeToUsers = (callback: (users: User[]) => void, onError?: (error: any) => void) => {
   const q = query(collection(db, USERS_COLLECTION));
+  // onSnapshot es rápido y maneja caché local automáticamente
   return onSnapshot(q, 
     (snapshot) => {
       const users: User[] = [];
       snapshot.forEach((doc) => {
         users.push({ ...doc.data(), id: doc.id } as User);
       });
-      cachedUsers = users; // Keep local cache updated
+      cachedUsers = users;
       callback(users);
     }, 
     (error) => {
@@ -99,7 +106,6 @@ export const subscribeToTasks = (callback: (tasks: Task[]) => void) => {
 
 export const addUser = async (user: User) => {
   try {
-    // Si el usuario ya tiene ID, usamos setDoc para forzar ese ID, si no addDoc
     if(user.id) {
         await setDoc(doc(db, USERS_COLLECTION, user.id), user);
     } else {
@@ -113,8 +119,6 @@ export const addUser = async (user: User) => {
 export const deleteUser = async (userId: string) => {
   try {
     await deleteDoc(doc(db, USERS_COLLECTION, userId));
-    
-    // Cleanup tasks assigned to this user
     const q = query(collection(db, TASKS_COLLECTION), where("assignedToUserId", "==", userId));
     const snap = await getDocs(q);
     const batch = writeBatch(db);
@@ -128,7 +132,6 @@ export const deleteUser = async (userId: string) => {
 export const saveTask = async (task: Task) => {
   try {
     const taskRef = doc(db, TASKS_COLLECTION, task.id);
-    // Merge true allows updating fields or creating if not exists
     await setDoc(taskRef, task, { merge: true });
     return task;
   } catch (e) {
@@ -155,7 +158,6 @@ export const toggleTaskCompletion = async (taskId: string) => {
         const today = new Date().toISOString().split('T')[0];
         let newDate: string | null = today;
         
-        // Logic: Toggle off if already completed today
         if (task.lastCompletedDate === today) {
             newDate = null;
         }
@@ -171,12 +173,9 @@ export const toggleTaskCompletion = async (taskId: string) => {
 
 // Async verification
 export const verifyPin = async (pin: string): Promise<User | null> => {
-    // Option A: Check local cache if subscribed
     if (cachedUsers.length > 0) {
         return cachedUsers.find(u => u.pin === pin) || null;
     }
-
-    // Option B: Query DB directly
     const q = query(collection(db, USERS_COLLECTION), where("pin", "==", pin));
     const snap = await getDocs(q);
     if (!snap.empty) {
@@ -186,7 +185,7 @@ export const verifyPin = async (pin: string): Promise<User | null> => {
     return null;
 };
 
-// --- LOGIC HELPERS (Pure functions) ---
+// --- LOGIC HELPERS ---
 
 export const getMondayOfWeek = (dateStr: string) => {
     const [y, m, d] = dateStr.split('-').map(Number);
