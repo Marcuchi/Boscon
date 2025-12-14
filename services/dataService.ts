@@ -17,12 +17,12 @@ import {
 
 const USERS_COLLECTION = 'users';
 const TASKS_COLLECTION = 'tasks';
-const LOCAL_USERS_KEY = 'boscon_local_users';
+export const LOCAL_USERS_KEY = 'boscon_local_users'; // Exported for optimistic loading
 const LOCAL_TASKS_KEY = 'boscon_local_tasks';
 
 // Initial Mock Data for Seeding
-const INITIAL_USERS: User[] = [
-  { id: 'u1', name: 'Administrador', role: UserRole.ADMIN, pin: 'boscon2025', avatarUrl: 'https://ui-avatars.com/api/?name=Admin&background=0D8ABC&color=fff', position: 'Gerente' },
+export const INITIAL_USERS: User[] = [ // Exported for fallback
+  { id: 'u1', name: 'Administrador', role: UserRole.ADMIN, pin: '0000', avatarUrl: 'https://ui-avatars.com/api/?name=Admin&background=0D8ABC&color=fff', position: 'Gerente' },
   { id: 'u2', name: 'Juan', role: UserRole.EMPLOYEE, pin: '1111', avatarUrl: 'https://ui-avatars.com/api/?name=Juan&background=random', position: 'Mantenimiento' },
   { id: 'u3', name: 'Maria López', role: UserRole.EMPLOYEE, pin: '2222', avatarUrl: 'https://ui-avatars.com/api/?name=Maria&background=random', position: 'Cocina' },
 ];
@@ -37,11 +37,11 @@ const INITIAL_TASKS: Task[] = [
 let cachedUsers: User[] | null = null;
 
 // --- LOCAL STORAGE HELPERS ---
-const getLocalData = <T>(key: string, defaultData: T[]): T[] => {
+export const getLocalData = <T>(key: string, defaultData: T[]): T[] => {
     try {
         const data = localStorage.getItem(key);
         if (!data) {
-            localStorage.setItem(key, JSON.stringify(defaultData));
+            // Do not write default immediately to avoid overwriting logic elsewhere, just return it
             return defaultData;
         }
         return JSON.parse(data);
@@ -111,6 +111,8 @@ export const subscribeToUsers = (callback: (users: User[]) => void) => {
           users.push({ ...doc.data(), id: doc.id } as User);
         });
         cachedUsers = users; 
+        // Update local cache for next fast reload
+        setLocalData(LOCAL_USERS_KEY, users);
         callback(users);
       }, (error) => {
           console.error("Firebase Subscription Error (Users):", error);
