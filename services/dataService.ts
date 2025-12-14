@@ -33,6 +33,9 @@ const INITIAL_TASKS: Task[] = [
   { id: 't3', title: 'Revisar temperaturas', description: 'Verificar termostatos de neveras 1, 2 y congelador.', assignedToUserId: 'u3', frequency: 'DAILY', repeatDays: [0,1,2,3,4,5,6], lastCompletedDate: null, createdAt: Date.now() },
 ];
 
+// CACHE VARIABLES
+let cachedUsers: User[] | null = null;
+
 // --- LOCAL STORAGE HELPERS ---
 const getLocalData = <T>(key: string, defaultData: T[]): T[] => {
     const data = localStorage.getItem(key);
@@ -98,11 +101,16 @@ export const subscribeToUsers = (callback: (users: User[]) => void) => {
         snapshot.forEach((doc) => {
           users.push({ ...doc.data(), id: doc.id } as User);
         });
+        cachedUsers = users; // Update Cache
         callback(users);
       });
   } else {
       // Local Storage
-      const read = () => callback(getLocalData<User>(LOCAL_USERS_KEY, INITIAL_USERS));
+      const read = () => {
+          const u = getLocalData<User>(LOCAL_USERS_KEY, INITIAL_USERS);
+          cachedUsers = u;
+          callback(u);
+      };
       read();
       
       const listener = () => read();
@@ -231,11 +239,31 @@ export const toggleTaskCompletion = async (taskId: string) => {
 
 export const verifyPin = async (pin: string): Promise<User | null> => {
   if (db) {
-      const q = query(collection(db, USERS_COLLECTION), where("pin", "==", pin));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const d = snap.docs[0];
-        return { ...d.data(), id: d.id } as User;
+      // 1. Try Cache First (Fastest)
+      if (cachedUsers) {
+          return cachedUsers.find(u => u.pin === pin) || null;
+      }
+
+      // 2. If no cache, fetch ALL users once (Optimized for small teams)
+      // This is better than query by pin because it allows us to cache the result for next tries
+      try {
+          const usersSnap = await getDocs(collection(db, USERS_COLLECTION));
+          const users: User[] = [];
+          usersSnap.forEach((doc) => {
+            users.push({ ...doc.data(), id: doc.id } as User);
+          });
+          
+          cachedUsers = users; // Hydrate cache
+          return users.find(u => u.pin === pin) || null;
+      } catch (error) {
+          console.error("Auth Error", error);
+          // Fallback to direct query if bulk fetch fails for some reason
+          const q = query(collection(db, USERS_COLLECTION), where("pin", "==", pin));
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            const d = snap.docs[0];
+            return { ...d.data(), id: d.id } as User;
+          }
       }
       return null;
   } else {

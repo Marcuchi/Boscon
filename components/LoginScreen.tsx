@@ -1,7 +1,13 @@
 import React, { useState } from 'react';
 import { verifyPin } from '../services/dataService';
 import { User } from '../types';
-import { ChevronRightIcon } from './ui/Icons';
+
+// Memoized Background component to prevent re-rendering heavy blur effects on every keystroke
+const BackgroundAmbience = React.memo(() => (
+  <div className="absolute inset-0 overflow-hidden pointer-events-none">
+     <div className="absolute top-[-20%] left-[-20%] w-[140%] h-[50%] bg-blue-900/20 blur-[100px] rounded-full" />
+  </div>
+));
 
 interface LoginScreenProps {
   onLogin: (user: User) => void;
@@ -20,6 +26,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
     setError(false);
 
     try {
+        // Force a small delay to allow UI to show loading state if verifyPin is too fast (cached)
+        // or to throttle rapid submissions
+        await new Promise(r => requestAnimationFrame(r));
+        
         const user = await verifyPin(password);
         if (user) {
           onLogin(user);
@@ -38,8 +48,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   return (
     <div className="h-screen w-full bg-[#1c1c1e] text-white flex flex-col items-center justify-center py-10 px-6 overflow-hidden relative">
       
-      {/* Background Ambience */}
-      <div className="absolute top-[-20%] left-[-20%] w-[140%] h-[50%] bg-blue-900/20 blur-[100px] rounded-full pointer-events-none" />
+      {/* Optimized Background */}
+      <BackgroundAmbience />
 
       <div className="flex-1 flex flex-col items-center justify-center w-full max-w-sm z-10">
           {/* Logo / Avatar */}
@@ -60,7 +70,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           <form onSubmit={handleSubmit} className="w-full space-y-4">
               <div className="relative">
                   <input
-                    type="password"
+                    type="password" // Use type="tel" or "number" with pattern if you want numeric keypad on mobile, but password is safer for masking
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     value={password}
                     onChange={(e) => {
                         setPassword(e.target.value);
@@ -70,6 +82,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                     className={`w-full bg-white/10 border ${error ? 'border-red-500/50 text-red-100' : 'border-white/10 focus:border-blue-500/50'} rounded-2xl px-5 py-4 text-center text-lg placeholder-gray-500 outline-none transition-all focus:bg-white/15`}
                     placeholder="Contraseña"
                     autoFocus
+                    autoComplete="off"
                   />
                   {error && (
                       <div className="absolute inset-y-0 right-4 flex items-center animate-[fadeIn_0.2s]">
