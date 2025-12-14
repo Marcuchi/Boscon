@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Task, UserRole, TaskFrequency } from '../types';
-import { subscribeToUsers, subscribeToTasks, saveTask, deleteTask, addUser, deleteUser, isTaskCompletedForDate, isTaskVisibleOnDate, getMondayOfWeek } from '../services/dataService';
-import { PlusIcon, TrashIcon, LogoutIcon, PencilIcon, EllipsisHorizontalIcon, ChevronRightIcon, XMarkIcon, UserIcon } from './ui/Icons';
+import { subscribeToUsers, subscribeToTasks, saveTask, deleteTask, addUser, deleteUser, isTaskCompletedForDate, isTaskVisibleOnDate } from '../services/dataService';
+import { generateChecklistForRole } from '../services/geminiService'; // Importamos el servicio IA
+import { PlusIcon, TrashIcon, LogoutIcon, PencilIcon, EllipsisHorizontalIcon, ChevronRightIcon, XMarkIcon, UserIcon, SparklesIcon } from './ui/Icons';
 
 interface AdminDashboardProps {
   currentUser: User;
@@ -10,11 +11,10 @@ interface AdminDashboardProps {
 
 // --- UI COMPONENTS ---
 
-// 1. Responsive Button
 interface ButtonProps { 
     children: React.ReactNode; 
     onClick?: () => void; 
-    variant?: 'primary' | 'secondary' | 'danger' | 'ghost'; 
+    variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'magic'; 
     className?: string; 
     disabled?: boolean; 
     fullWidth?: boolean; 
@@ -28,7 +28,8 @@ const Button: React.FC<ButtonProps> = ({
         primary: "bg-blue-600 text-white shadow-lg shadow-blue-500/30 hover:bg-blue-700 disabled:bg-gray-300 disabled:shadow-none",
         secondary: "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50",
         danger: "bg-red-50 text-red-600 hover:bg-red-100",
-        ghost: "bg-transparent text-gray-500 hover:bg-gray-100"
+        ghost: "bg-transparent text-gray-500 hover:bg-gray-100",
+        magic: "bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50"
     };
 
     return (
@@ -42,41 +43,17 @@ const Button: React.FC<ButtonProps> = ({
     );
 };
 
-// 2. Modal / Bottom Sheet Wrapper
-interface ModalProps { 
-    isOpen: boolean; 
-    onClose: () => void; 
-    title: string; 
-    children: React.ReactNode; 
-}
-
-const ResponsiveModal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
+// Wrapper para Modales
+const ResponsiveModal: React.FC<{ isOpen: boolean; onClose: () => void; title: string; children: React.ReactNode }> = ({ isOpen, onClose, title, children }) => {
     if (!isOpen) return null;
-
     return (
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
-            {/* Backdrop */}
             <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={onClose} />
-            
-            {/* Content Card */}
-            <div className="
-                relative z-10 w-full bg-white 
-                rounded-t-3xl md:rounded-3xl 
-                shadow-2xl 
-                max-h-[90vh] md:max-h-[85vh] 
-                overflow-hidden flex flex-col
-                md:max-w-md lg:max-w-lg
-                animate-[slideUp_0.3s_ease-out] md:animate-[fadeIn_0.2s_ease-out]
-            ">
-                {/* Header */}
+            <div className="relative z-10 w-full bg-white rounded-t-3xl md:rounded-3xl shadow-2xl max-h-[90vh] md:max-h-[85vh] overflow-hidden flex flex-col md:max-w-md lg:max-w-lg animate-[slideUp_0.3s_ease-out] md:animate-[fadeIn_0.2s_ease-out]">
                 <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-white/80 backdrop-blur-md sticky top-0 z-20">
                     <h3 className="text-lg font-bold text-gray-900">{title}</h3>
-                    <button onClick={onClose} className="p-2 bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200">
-                        <XMarkIcon className="w-5 h-5" />
-                    </button>
+                    <button onClick={onClose} className="p-2 bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200"><XMarkIcon className="w-5 h-5" /></button>
                 </div>
-
-                {/* Scrollable Body */}
                 <div className="p-6 overflow-y-auto overflow-x-hidden no-scrollbar">
                     {children}
                 </div>
@@ -85,11 +62,11 @@ const ResponsiveModal: React.FC<ModalProps> = ({ isOpen, onClose, title, childre
     );
 };
 
-// --- HELPER FOR DATES ---
+// --- LOGIC HELPERS ---
 const getStartOfWeek = (d: Date) => {
     const date = new Date(d);
     const day = date.getDay();
-    const diff = date.getDate() - day + (day === 0 ? -6 : 1); // Monday is start
+    const diff = date.getDate() - day + (day === 0 ? -6 : 1); 
     const monday = new Date(date.setDate(diff));
     monday.setHours(0,0,0,0);
     return monday;
@@ -98,15 +75,12 @@ const getStartOfWeek = (d: Date) => {
 // --- MAIN COMPONENT ---
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onLogout }) => {
-  // State
   const [users, setUsers] = useState<User[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  
-  // Date State
   const [viewDate, setViewDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(getStartOfWeek(new Date()));
-  const [browsingMonth, setBrowsingMonth] = useState<Date>(new Date()); // For the month picker
+  const [browsingMonth, setBrowsingMonth] = useState<Date>(new Date());
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   
   // Modal States
@@ -115,46 +89,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const [showEmployeeMenu, setShowEmployeeMenu] = useState(false);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   
-  // Form States (Task)
+  // Task Form
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDescription, setNewTaskDescription] = useState('');
   const [taskFrequency, setTaskFrequency] = useState<TaskFrequency>('DAILY');
   const [selectedDays, setSelectedDays] = useState<number[]>([]); 
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
 
-  // Form States (User)
+  // User Form
   const [newUserName, setNewUserName] = useState('');
   const [newUserPin, setNewUserPin] = useState('');
   const [newUserPosition, setNewUserPosition] = useState('');
   const [newUserAvatar, setNewUserAvatar] = useState('');
 
-  const scrollRef = useRef<HTMLDivElement>(null);
   const WEEKDAYS_HEADER = ['L', 'M', 'M', 'J', 'V', 'S', 'D']; 
 
-  // --- LOGIC ---
-  
-  // Subscriptions to Firebase
   useEffect(() => {
     const unsubUsers = subscribeToUsers((data) => {
         const employees = data.filter(u => u.role !== UserRole.ADMIN);
         setUsers(employees);
-        // If selected user was deleted or not set, set to first
-        if (!selectedUser && employees.length > 0) {
-            setSelectedUser(employees[0]);
-        }
+        if (!selectedUser && employees.length > 0) setSelectedUser(employees[0]);
     });
+    const unsubTasks = subscribeToTasks(setTasks);
+    return () => { unsubUsers(); unsubTasks(); };
+  }, []);
 
-    const unsubTasks = subscribeToTasks((data) => {
-        setTasks(data);
-    });
-
-    return () => {
-        unsubUsers();
-        unsubTasks();
-    };
-  }, []); // Run once on mount
-
-  // Update selectedUser reference if it changes in the users list update
   useEffect(() => {
      if(selectedUser) {
          const found = users.find(u => u.id === selectedUser.id);
@@ -166,31 +126,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
      }
   }, [users]);
   
-  // Filter Logic
   const userTasks = tasks.filter(t => {
       if (t.assignedToUserId !== selectedUser?.id) return false;
       return isTaskVisibleOnDate(t, viewDate);
   });
 
-  const sortTasks = (taskList: Task[]) => {
-      return taskList.sort((a, b) => {
-          const aCompleted = isTaskCompletedForDate(a, viewDate);
-          const bCompleted = isTaskCompletedForDate(b, viewDate);
-          if (aCompleted === bCompleted) return 0;
-          return aCompleted ? 1 : -1;
-      });
-  };
+  const dailyTasks = userTasks.filter(t => t.frequency === 'DAILY');
+  const weeklyTasks = userTasks.filter(t => t.frequency === 'WEEKLY');
 
-  const dailyTasks = sortTasks(userTasks.filter(t => t.frequency === 'DAILY'));
-  const weeklyTasks = sortTasks(userTasks.filter(t => t.frequency === 'WEEKLY'));
-
-  // Handlers
   const handleSaveTask = async () => {
     if (!newTaskTitle.trim() || !selectedUser) return;
-    
-    // Map UI Index to JS Day Index (0-6 Sun)
     const mapUiToJsDay = (uiIdx: number) => uiIdx === 6 ? 0 : uiIdx + 1;
-    
     const finalRepeatDays = taskFrequency === 'WEEKLY' ? [] : selectedDays.map(mapUiToJsDay);
 
     const newTask: Task = {
@@ -205,26 +151,44 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
         createdAt: editingTask ? editingTask.createdAt : Date.now()
     };
 
-    await saveTask(newTask); // Async
+    await saveTask(newTask);
     setShowAddModal(false);
     setEditingTask(null);
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-              setNewUserAvatar(reader.result as string);
-          };
-          reader.readAsDataURL(file);
+  const handleGenerateAI = async () => {
+      if(!selectedUser) return;
+      setIsGeneratingAI(true);
+      try {
+        // Obtenemos sugerencias
+        const suggestions = await generateChecklistForRole(selectedUser.position || "Empleado General");
+        
+        // Guardamos cada sugerencia automáticamente
+        for(const item of suggestions) {
+            const newTask: Task = {
+                id: Math.random().toString(36).substr(2, 9),
+                title: item.title,
+                description: item.description,
+                assignedToUserId: selectedUser.id,
+                frequency: item.frequency as TaskFrequency,
+                repeatDays: item.frequency === 'DAILY' ? [0,1,2,3,4,5,6] : [], // Por defecto todos los días si es diaria
+                scheduledDate: undefined,
+                lastCompletedDate: null,
+                createdAt: Date.now()
+            };
+            await saveTask(newTask);
+        }
+        alert(`¡Se generaron ${suggestions.length} tareas automáticas!`);
+      } catch (e) {
+          alert("Error generando tareas.");
+      } finally {
+          setIsGeneratingAI(false);
       }
   };
 
   const handleCreateUser = async () => {
       if (!newUserName.trim() || !newUserPin.trim()) return;
       const avatar = newUserAvatar.trim() || `https://ui-avatars.com/api/?name=${encodeURIComponent(newUserName)}&background=random`;
-      
       const newUser: User = {
           id: Math.random().toString(36).substr(2, 9),
           name: newUserName,
@@ -233,8 +197,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
           avatarUrl: avatar,
           position: newUserPosition || 'Empleado'
       };
-      await addUser(newUser); // Async
-      // No need to setUsers manually, subscription handles it
+      await addUser(newUser);
       setSelectedUser(newUser);
       setShowUserModal(false);
   };
@@ -251,10 +214,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
       setNewTaskTitle(task.title);
       setNewTaskDescription(task.description || '');
       setTaskFrequency(task.frequency);
-      
       const mapJsToUiDay = (jsIdx: number) => jsIdx === 0 ? 6 : jsIdx - 1;
       setSelectedDays((task.repeatDays || []).map(mapJsToUiDay));
-      
       setShowAddModal(true);
   };
 
@@ -268,144 +229,56 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
      else setSelectedDays([...selectedDays, idx].sort());
   };
 
-  // --- Calendar Helpers ---
   const changeWeek = (offset: number) => {
       const newStart = new Date(currentWeekStart);
       newStart.setDate(newStart.getDate() + (offset * 7));
       setCurrentWeekStart(newStart);
   };
 
-  const changeBrowsingMonth = (offset: number) => {
-      const newDate = new Date(browsingMonth);
-      newDate.setMonth(newDate.getMonth() + offset);
-      setBrowsingMonth(newDate);
+  const TaskCard: React.FC<{ task: Task }> = ({ task }) => {
+      const isCompleted = isTaskCompletedForDate(task, viewDate);
+      return (
+        <div onClick={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)} className="group bg-white rounded-2xl p-4 border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer relative overflow-hidden w-full">
+            <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${isCompleted ? 'bg-green-50 text-green-700 border-green-100' : 'bg-amber-50 text-amber-600 border-amber-100'}`}>
+                            {isCompleted ? <>Hecho</> : <>Pendiente</>}
+                        </span>
+                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{task.frequency === 'DAILY' ? 'Diaria' : 'Semanal'}</span>
+                    </div>
+                    <h4 className={`text-sm font-semibold text-gray-900 break-words leading-tight ${isCompleted ? 'text-gray-500' : ''}`}>{task.title}</h4>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                     <button onClick={(e) => { e.stopPropagation(); openEditModal(task); }} className="p-2 text-blue-500 hover:bg-blue-50 rounded-xl transition-colors"><PencilIcon className="w-4 h-4" /></button>
+                     <button onClick={async (e) => { e.stopPropagation(); if(confirm('¿Eliminar?')) await deleteTask(task.id); }} className="p-2 text-red-400 hover:bg-red-50 rounded-xl transition-colors"><TrashIcon className="w-4 h-4" /></button>
+                </div>
+            </div>
+            {expandedTaskId === task.id && <div className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-600 animate-[fadeIn_0.2s] break-words">{task.description || "No hay descripción."}</div>}
+        </div>
+      );
   };
 
-  const handleSelectDateFromPicker = (date: Date) => {
-      const dStr = date.toISOString().split('T')[0];
-      setViewDate(dStr);
-      setCurrentWeekStart(getStartOfWeek(date));
-      setShowMonthPicker(false);
-  };
-  
+  // --- RENDER ---
+
   const weekDays = Array.from({length: 7}, (_, i) => {
       const d = new Date(currentWeekStart);
       d.setDate(d.getDate() + i);
       return d;
   });
 
-  const getDaysForMonthPicker = (date: Date) => {
-      const year = date.getFullYear();
-      const month = date.getMonth();
-      const numDays = new Date(year, month + 1, 0).getDate();
-      const firstDay = new Date(year, month, 1).getDay(); // 0 = Sun, 1 = Mon
-      const padding = firstDay === 0 ? 6 : firstDay - 1;
-
-      const days = [];
-      for(let i=0; i<padding; i++) days.push(null);
-      for(let i=1; i<=numDays; i++) days.push(new Date(year, month, i));
-      return days;
-  };
-
-  // --- UI HELPERS ---
-  const getSelectionLabel = () => {
-      if (selectedDays.length === 7) return "Todos los días";
-      if (selectedDays.length === 0) return "Selecciona los días";
-      if (selectedDays.length === 5 && !selectedDays.includes(5) && !selectedDays.includes(6)) return "Entre semana (L-V)";
-      if (selectedDays.length === 2 && selectedDays.includes(5) && selectedDays.includes(6)) return "Fines de semana";
-      return "Días personalizados";
-  };
-  
-  // --- SUB-COMPONENTS ---
-
-  const TaskCard: React.FC<{ task: Task }> = ({ task }) => {
-      const isCompleted = isTaskCompletedForDate(task, viewDate);
-      return (
-        <div 
-            onClick={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}
-            className="group bg-white rounded-2xl p-4 border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer relative overflow-hidden w-full"
-        >
-            <div className="flex items-start justify-between gap-3">
-                <div className="flex-1 min-w-0 flex flex-col gap-1.5">
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${
-                            isCompleted 
-                            ? 'bg-green-50 text-green-700 border-green-100' 
-                            : 'bg-amber-50 text-amber-600 border-amber-100'
-                        }`}>
-                            {isCompleted ? (
-                                <>
-                                    <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                                    Hecho
-                                </>
-                            ) : (
-                                <>
-                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                                    Pendiente
-                                </>
-                            )}
-                        </span>
-                        
-                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
-                            {task.frequency === 'DAILY' ? 'Diaria' : 'Semanal'}
-                        </span>
-                    </div>
-
-                    <h4 className={`text-sm font-semibold text-gray-900 break-words leading-tight ${isCompleted ? 'text-gray-500' : ''}`}>
-                        {task.title}
-                    </h4>
-                </div>
-
-                <div className="flex items-center gap-1 flex-shrink-0">
-                     <button 
-                        onClick={(e) => { e.stopPropagation(); openEditModal(task); }} 
-                        className="p-2 text-blue-500 hover:bg-blue-50 rounded-xl transition-colors"
-                        title="Editar"
-                     >
-                        <PencilIcon className="w-4 h-4" />
-                     </button>
-                     <button 
-                        onClick={async (e) => { 
-                            e.stopPropagation(); 
-                            if(confirm('¿Eliminar esta tarea permanentemente?')) { 
-                                await deleteTask(task.id); 
-                            } 
-                        }} 
-                        className="p-2 text-red-400 hover:bg-red-50 rounded-xl transition-colors"
-                        title="Eliminar"
-                     >
-                        <TrashIcon className="w-4 h-4" />
-                     </button>
-                </div>
-            </div>
-            
-            {expandedTaskId === task.id && (
-                <div className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-600 animate-[fadeIn_0.2s] break-words">
-                    <p className="font-semibold text-gray-400 text-[10px] uppercase mb-1">Descripción</p>
-                    {task.description || "No hay descripción detallada."}
-                </div>
-            )}
-        </div>
-      );
-  };
-
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[#F2F2F7]">
         
-        {/* --- SIDEBAR (Desktop) --- */}
+        {/* SIDEBAR DESKTOP */}
         <aside className="hidden md:flex flex-col w-72 bg-white border-r border-gray-200 h-full flex-shrink-0">
             <div className="p-6 border-b border-gray-100">
-                <h1 className="text-xl font-bold tracking-tight text-gray-900">Boscon <span className="text-blue-600">.Admin</span></h1>
+                <h1 className="text-xl font-bold text-gray-900">Boscon <span className="text-blue-600">.Admin</span></h1>
             </div>
-            
             <div className="flex-1 overflow-y-auto p-4 space-y-1">
                 <p className="px-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Equipo</p>
                 {users.map(u => (
-                    <button 
-                        key={u.id}
-                        onClick={() => setSelectedUser(u)}
-                        className={`w-full flex items-center gap-3 p-2 rounded-xl text-left transition-colors ${selectedUser?.id === u.id ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
-                    >
+                    <button key={u.id} onClick={() => setSelectedUser(u)} className={`w-full flex items-center gap-3 p-2 rounded-xl text-left transition-colors ${selectedUser?.id === u.id ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}>
                         <img src={u.avatarUrl} className="w-9 h-9 rounded-full bg-gray-200 object-cover" />
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold truncate">{u.name}</p>
@@ -414,30 +287,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                         {selectedUser?.id === u.id && <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />}
                     </button>
                 ))}
-                
-                <button onClick={() => { setNewUserName(''); setNewUserPin(''); setNewUserAvatar(''); setShowUserModal(true); }} className="w-full flex items-center gap-3 p-2 mt-4 rounded-xl border border-dashed border-gray-300 text-gray-500 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-700 transition-all">
+                <button onClick={() => { setNewUserName(''); setNewUserPin(''); setShowUserModal(true); }} className="w-full flex items-center gap-3 p-2 mt-4 rounded-xl border border-dashed border-gray-300 text-gray-500 hover:bg-gray-50">
                     <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center"><PlusIcon className="w-5 h-5" /></div>
                     <span className="text-sm font-medium">Agregar Empleado</span>
                 </button>
             </div>
-
             <div className="p-4 border-t border-gray-200">
-                <button onClick={onLogout} className="w-full flex items-center gap-2 p-2 text-sm text-gray-500 hover:text-red-600 transition-colors">
-                    <LogoutIcon className="w-5 h-5" /> Cerrar Sesión
-                </button>
+                <button onClick={onLogout} className="w-full flex items-center gap-2 p-2 text-sm text-gray-500 hover:text-red-600"><LogoutIcon className="w-5 h-5" /> Cerrar Sesión</button>
             </div>
         </aside>
 
-        {/* --- MAIN CONTENT --- */}
+        {/* MAIN CONTENT */}
         <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-            
-            {/* Header (Mobile) */}
             <div className="md:hidden bg-white/80 backdrop-blur-md z-20 sticky top-0 border-b border-gray-200">
                 <div className="flex justify-between items-center px-4 py-3">
                     <h1 className="font-bold text-lg">Admin</h1>
                     <button onClick={onLogout}><LogoutIcon className="w-5 h-5 text-gray-600" /></button>
                 </div>
-                {/* Horizontal User List Mobile */}
                 <div className="flex gap-4 overflow-x-auto px-4 pb-3 no-scrollbar">
                     {users.map(u => (
                         <div key={u.id} onClick={() => setSelectedUser(u)} className="flex flex-col items-center gap-1 flex-shrink-0 cursor-pointer">
@@ -447,90 +313,51 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                             <span className="text-[10px] font-medium text-gray-600 truncate max-w-[60px]">{u.name.split(' ')[0]}</span>
                         </div>
                     ))}
-                    <button onClick={() => { setNewUserName(''); setNewUserPin(''); setNewUserAvatar(''); setShowUserModal(true); }} className="flex flex-col items-center gap-1 flex-shrink-0">
+                    <button onClick={() => { setNewUserName(''); setNewUserPin(''); setShowUserModal(true); }} className="flex flex-col items-center gap-1 flex-shrink-0">
                         <div className="w-14 h-14 rounded-full border border-dashed border-gray-400 flex items-center justify-center bg-gray-50"><PlusIcon className="w-6 h-6 text-gray-400" /></div>
                         <span className="text-[10px] font-medium text-gray-400">Nuevo</span>
                     </button>
                 </div>
             </div>
 
-            {/* Content Scrollable Area */}
             {selectedUser ? (
                 <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
-                    
-                    {/* Desktop Header */}
                     <div className="hidden md:flex justify-between items-center">
                         <div>
                             <h2 className="text-2xl font-bold text-gray-900">{selectedUser.name}</h2>
                             <p className="text-gray-500">{selectedUser.position || 'Miembro del equipo'}</p>
                         </div>
                         <div className="flex gap-2">
-                             <Button onClick={() => { 
-                                 setEditingTask(null); setNewTaskTitle(''); setNewTaskDescription(''); setTaskFrequency('DAILY'); setSelectedDays([]); 
-                                 setShowAddModal(true); 
-                             }}>Nueva Tarea</Button>
+                             <Button onClick={handleGenerateAI} disabled={isGeneratingAI} variant="magic">
+                                {isGeneratingAI ? <span className="animate-pulse">Generando...</span> : <><SparklesIcon className="w-4 h-4"/> Generar con IA</>}
+                             </Button>
+                             <Button onClick={() => { setEditingTask(null); setNewTaskTitle(''); setNewTaskDescription(''); setTaskFrequency('DAILY'); setSelectedDays([]); setShowAddModal(true); }}>Nueva Tarea</Button>
                              <button onClick={() => setShowEmployeeMenu(true)} className="p-3 bg-white border border-gray-200 rounded-xl hover:bg-gray-50"><EllipsisHorizontalIcon className="w-5 h-5 text-gray-600" /></button>
                         </div>
                     </div>
 
-                    {/* NEW: Weekly Calendar Strip */}
+                    {/* Weekly Strip */}
                     <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-200/60">
-                         {/* Controls */}
                          <div className="flex justify-between items-center mb-4 px-1">
-                            <button onClick={() => changeWeek(-1)} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500">
-                                <div className="rotate-180"><ChevronRightIcon className="w-5 h-5" /></div>
-                            </button>
-                            
-                            {/* Clickable Month Title */}
-                            <button 
-                                onClick={() => { setBrowsingMonth(currentWeekStart); setShowMonthPicker(true); }}
-                                className="text-base font-bold text-gray-900 capitalize flex items-center gap-2 hover:bg-gray-50 px-3 py-1 rounded-lg transition-colors"
-                            >
-                                {currentWeekStart.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
-                                <span className="text-blue-500 text-xs bg-blue-50 px-2 py-0.5 rounded-full">Cambiar</span>
-                            </button>
-
-                            <button onClick={() => changeWeek(1)} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500">
-                                <ChevronRightIcon className="w-5 h-5" />
-                            </button>
+                            <button onClick={() => changeWeek(-1)} className="p-2 hover:bg-gray-100 rounded-full"><div className="rotate-180"><ChevronRightIcon className="w-5 h-5" /></div></button>
+                            <button onClick={() => setShowMonthPicker(true)} className="text-base font-bold text-gray-900 capitalize">{currentWeekStart.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}</button>
+                            <button onClick={() => changeWeek(1)} className="p-2 hover:bg-gray-100 rounded-full"><ChevronRightIcon className="w-5 h-5" /></button>
                          </div>
-                         
-                         {/* 7-Day Grid (Fixed, not scrollable) */}
                          <div className="grid grid-cols-7 gap-1 md:gap-3">
                              {weekDays.map(date => {
                                  const dStr = date.toISOString().split('T')[0];
                                  const isSelected = viewDate === dStr;
-                                 const hasTask = tasks.some(t => t.assignedToUserId === selectedUser.id && isTaskVisibleOnDate(t, dStr));
                                  const isToday = dStr === new Date().toISOString().split('T')[0];
-                                 
                                  return (
-                                     <button 
-                                        key={dStr} onClick={() => setViewDate(dStr)}
-                                        className={`flex flex-col items-center justify-center py-3 rounded-2xl transition-all relative ${
-                                            isSelected 
-                                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30 scale-105' 
-                                            : 'bg-transparent text-gray-500 hover:bg-gray-50'
-                                        }`}
-                                     >
-                                        <span className={`text-[10px] font-bold uppercase mb-1 ${isSelected ? 'text-blue-200' : 'text-gray-400'}`}>
-                                            {WEEKDAYS_HEADER[date.getDay() === 0 ? 6 : date.getDay() - 1]}
-                                        </span>
-                                        <span className={`text-lg font-bold leading-none ${isToday && !isSelected ? 'text-blue-600' : ''}`}>
-                                            {date.getDate()}
-                                        </span>
-                                        
-                                        {/* Indicators */}
-                                        <div className="flex gap-0.5 mt-1.5 h-1">
-                                            {isToday && !isSelected && <span className="w-1 h-1 rounded-full bg-blue-600" title="Hoy" />}
-                                            {hasTask && <span className={`w-1 h-1 rounded-full ${isSelected ? 'bg-white' : 'bg-gray-400'}`} />}
-                                        </div>
+                                     <button key={dStr} onClick={() => setViewDate(dStr)} className={`flex flex-col items-center justify-center py-3 rounded-2xl transition-all relative ${isSelected ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30 scale-105' : 'bg-transparent text-gray-500 hover:bg-gray-50'}`}>
+                                        <span className={`text-[10px] font-bold uppercase mb-1 ${isSelected ? 'text-blue-200' : 'text-gray-400'}`}>{WEEKDAYS_HEADER[date.getDay() === 0 ? 6 : date.getDay() - 1]}</span>
+                                        <span className={`text-lg font-bold leading-none ${isToday && !isSelected ? 'text-blue-600' : ''}`}>{date.getDate()}</span>
                                      </button>
                                  )
                              })}
                          </div>
                     </div>
 
-                    {/* Tasks Container */}
                     <div className="space-y-6 pb-20 md:pb-0">
                         {dailyTasks.length > 0 && (
                             <div>
@@ -540,7 +367,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                                 </div>
                             </div>
                         )}
-                        
                         {weeklyTasks.length > 0 && (
                             <div>
                                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 ml-1">Tareas Semanales</h3>
@@ -549,243 +375,63 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                                 </div>
                             </div>
                         )}
-
                         {dailyTasks.length === 0 && weeklyTasks.length === 0 && (
                             <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-                                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-3">
-                                    <span className="text-2xl">😴</span>
-                                </div>
+                                <span className="text-2xl mb-3">😴</span>
                                 <p className="text-sm">Sin tareas asignadas para este día.</p>
                             </div>
                         )}
                     </div>
                 </div>
             ) : (
-                <div className="flex-1 flex items-center justify-center text-gray-400 p-8 text-center">
-                    Selecciona un empleado del menú para comenzar.
-                </div>
+                <div className="flex-1 flex items-center justify-center text-gray-400 p-8 text-center">Selecciona un empleado.</div>
             )}
 
-            {/* Mobile Floating Action Button */}
+            {/* Mobile Actions */}
             {selectedUser && (
-                <div className="md:hidden absolute bottom-6 right-6">
-                    <button 
-                        onClick={() => { 
-                             setEditingTask(null); setNewTaskTitle(''); setNewTaskDescription(''); setTaskFrequency('DAILY'); setSelectedDays([]); 
-                             setShowAddModal(true); 
-                        }}
-                        className="w-14 h-14 bg-blue-600 rounded-full text-white shadow-xl shadow-blue-600/40 flex items-center justify-center active:scale-90 transition-transform"
-                    >
+                <div className="md:hidden absolute bottom-6 right-6 flex flex-col gap-3">
+                    <button onClick={handleGenerateAI} disabled={isGeneratingAI} className="w-14 h-14 bg-purple-600 rounded-full text-white shadow-xl flex items-center justify-center active:scale-90 transition-transform">
+                        {isGeneratingAI ? <span className="animate-spin">✨</span> : <SparklesIcon className="w-7 h-7" />}
+                    </button>
+                    <button onClick={() => { setEditingTask(null); setNewTaskTitle(''); setShowAddModal(true); }} className="w-14 h-14 bg-blue-600 rounded-full text-white shadow-xl flex items-center justify-center active:scale-90 transition-transform">
                         <PlusIcon className="w-7 h-7" />
                     </button>
                 </div>
             )}
         </main>
 
-        {/* --- MODALS --- */}
-        
-        {/* Month Picker Modal */}
-        <ResponsiveModal isOpen={showMonthPicker} onClose={() => setShowMonthPicker(false)} title="Seleccionar Fecha">
-            <div className="space-y-4">
-                 <div className="flex justify-between items-center mb-4">
-                     <button onClick={() => changeBrowsingMonth(-1)} className="p-2 rounded-full hover:bg-gray-100"><div className="rotate-180"><ChevronRightIcon className="w-5 h-5 text-gray-600"/></div></button>
-                     <h3 className="font-bold text-lg capitalize">{browsingMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}</h3>
-                     <button onClick={() => changeBrowsingMonth(1)} className="p-2 rounded-full hover:bg-gray-100"><ChevronRightIcon className="w-5 h-5 text-gray-600"/></button>
-                 </div>
-                 
-                 <div className="grid grid-cols-7 gap-2 text-center mb-2">
-                     {WEEKDAYS_HEADER.map(d => <span key={d} className="text-xs font-bold text-gray-400">{d}</span>)}
-                 </div>
-                 
-                 <div className="grid grid-cols-7 gap-2">
-                     {getDaysForMonthPicker(browsingMonth).map((d, i) => {
-                         if (!d) return <div key={i} />;
-                         const dStr = d.toISOString().split('T')[0];
-                         const isSelected = viewDate === dStr;
-                         const isToday = dStr === new Date().toISOString().split('T')[0];
-                         
-                         return (
-                             <button 
-                                key={dStr} 
-                                onClick={() => handleSelectDateFromPicker(d)}
-                                className={`
-                                    h-10 w-full rounded-full flex items-center justify-center text-sm font-semibold transition-all
-                                    ${isSelected ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-900'}
-                                    ${isToday && !isSelected ? 'text-blue-600 border border-blue-200' : ''}
-                                `}
-                             >
-                                 {d.getDate()}
-                             </button>
-                         )
-                     })}
-                 </div>
-                 
-                 <Button variant="ghost" fullWidth onClick={() => {
-                     const today = new Date();
-                     handleSelectDateFromPicker(today);
-                     setBrowsingMonth(today);
-                 }}>
-                     Ir a Hoy
-                 </Button>
-            </div>
-        </ResponsiveModal>
-
-        {/* 1. Add/Edit Task Modal */}
-        <ResponsiveModal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title={editingTask ? 'Editar Tarea' : 'Nueva Tarea'}>
+        {/* MODALS */}
+        <ResponsiveModal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title={editingTask ? 'Editar' : 'Nueva'}>
              <div className="space-y-5">
-                 
-                 <div>
-                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Título</label>
-                     <input 
-                        type="text" 
-                        value={newTaskTitle} 
-                        onChange={e => setNewTaskTitle(e.target.value)} 
-                        className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
-                        placeholder="Ej. Limpiar vidrios"
-                     />
-                 </div>
-                 <div>
-                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Descripción</label>
-                     <textarea 
-                        value={newTaskDescription} 
-                        onChange={e => setNewTaskDescription(e.target.value)} 
-                        className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all h-24 resize-none"
-                        placeholder="Detalles adicionales..."
-                     />
-                 </div>
-                 
-                 {/* Custom Segmented Control */}
+                 <input type="text" value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3" placeholder="Título" />
+                 <textarea value={newTaskDescription} onChange={e => setNewTaskDescription(e.target.value)} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 h-24 resize-none" placeholder="Detalles..." />
                  <div className="bg-gray-100 p-1 rounded-xl flex">
                      <button onClick={() => setTaskFrequency('DAILY')} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${taskFrequency === 'DAILY' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>Diaria</button>
                      <button onClick={() => setTaskFrequency('WEEKLY')} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${taskFrequency === 'WEEKLY' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>Semanal</button>
                  </div>
-
-                 {/* Refactored Day Selector */}
-                 <div className={`transition-all duration-300 ${taskFrequency === 'WEEKLY' ? 'opacity-40 grayscale' : 'opacity-100'}`}>
-                     {taskFrequency === 'WEEKLY' ? (
-                         <div className="text-center p-4 bg-blue-50 text-blue-800 rounded-xl border border-blue-100">
-                             <p className="text-sm font-semibold">Tarea de una sola vez</p>
-                             <p className="text-xs mt-1 opacity-80">Visible solo durante la semana actual.</p>
-                         </div>
-                     ) : (
-                         <>
-                            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 block">
-                                Días de Repetición
-                            </label>
-                            <div className="grid grid-cols-7 gap-2">
-                                {WEEKDAYS_HEADER.map((d, i) => {
-                                    const isActive = selectedDays.includes(i);
-                                    return (
-                                        <button 
-                                            key={i} onClick={() => toggleDay(i)}
-                                            className={`
-                                                aspect-square rounded-full flex items-center justify-center text-xs sm:text-sm font-bold transition-all duration-200
-                                                ${isActive 
-                                                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30 scale-100' 
-                                                    : 'bg-gray-100 text-gray-400 hover:bg-gray-200 scale-95'
-                                                }
-                                            `}
-                                        >
-                                            {d}
-                                        </button>
-                                    )
-                                })}
-                            </div>
-                            <p className="text-[10px] text-gray-400 mt-2 text-center h-4 font-medium transition-all">
-                                {getSelectionLabel()}
-                            </p>
-                         </>
-                     )}
-                 </div>
-
-                 <Button fullWidth onClick={handleSaveTask} disabled={!newTaskTitle.trim()}>Guardar Tarea</Button>
+                 {taskFrequency === 'DAILY' && (
+                    <div className="grid grid-cols-7 gap-2">
+                        {WEEKDAYS_HEADER.map((d, i) => (
+                            <button key={i} onClick={() => toggleDay(i)} className={`aspect-square rounded-full flex items-center justify-center text-xs font-bold ${selectedDays.includes(i) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400'}`}>{d}</button>
+                        ))}
+                    </div>
+                 )}
+                 <Button fullWidth onClick={handleSaveTask}>Guardar</Button>
              </div>
         </ResponsiveModal>
 
-        {/* 2. User Modal */}
         <ResponsiveModal isOpen={showUserModal} onClose={() => setShowUserModal(false)} title="Nuevo Empleado">
             <div className="space-y-4">
-                 <div>
-                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Nombre</label>
-                     <input type="text" value={newUserName} onChange={e => setNewUserName(e.target.value)} className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ej. Ana Pérez" />
-                 </div>
-                 <div>
-                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Contraseña</label>
-                     <input type="text" value={newUserPin} onChange={e => setNewUserPin(e.target.value)} className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Contraseña segura" />
-                 </div>
-                 
-                 {/* Image Upload Section */}
-                 <div>
-                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Foto de Perfil (Opcional)</label>
-                     <div className="flex items-center gap-4 mt-2">
-                         <div className="relative">
-                             <div className="w-16 h-16 rounded-full bg-gray-100 overflow-hidden border border-gray-200 flex-shrink-0">
-                                 {newUserAvatar ? (
-                                     <img src={newUserAvatar} alt="Preview" className="w-full h-full object-cover" />
-                                 ) : (
-                                     <div className="w-full h-full flex items-center justify-center text-gray-400 bg-gray-50">
-                                         <UserIcon className="w-8 h-8" />
-                                     </div>
-                                 )}
-                             </div>
-                             {newUserAvatar && (
-                                 <button 
-                                     onClick={() => setNewUserAvatar('')}
-                                     className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600 transition-colors"
-                                     title="Quitar foto"
-                                 >
-                                     <XMarkIcon className="w-3 h-3" />
-                                 </button>
-                             )}
-                         </div>
-
-                         <div>
-                             <input 
-                                 type="file" 
-                                 id="avatar-upload"
-                                 accept="image/*"
-                                 className="hidden"
-                                 onChange={handleImageUpload}
-                             />
-                             <label 
-                                 htmlFor="avatar-upload" 
-                                 className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 rounded-xl text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 cursor-pointer transition-colors"
-                             >
-                                 Subir Imagen
-                             </label>
-                             <p className="text-[10px] text-gray-400 mt-1">
-                                 Deja vacío para usar avatar automático.
-                             </p>
-                         </div>
-                     </div>
-                 </div>
-
-                 <div>
-                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Puesto</label>
-                     <input type="text" value={newUserPosition} onChange={e => setNewUserPosition(e.target.value)} className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ej. Cocinero" />
-                 </div>
-                 <Button fullWidth onClick={handleCreateUser} disabled={!newUserName || newUserPin.length < 1}>Crear Empleado</Button>
+                 <input type="text" value={newUserName} onChange={e => setNewUserName(e.target.value)} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3" placeholder="Nombre" />
+                 <input type="text" value={newUserPin} onChange={e => setNewUserPin(e.target.value)} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3" placeholder="PIN" />
+                 <input type="text" value={newUserPosition} onChange={e => setNewUserPosition(e.target.value)} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3" placeholder="Puesto" />
+                 <Button fullWidth onClick={handleCreateUser}>Crear</Button>
             </div>
         </ResponsiveModal>
 
-        {/* 3. Employee Options Menu (Mobile Bottom Sheet / Desktop Modal) */}
         <ResponsiveModal isOpen={showEmployeeMenu} onClose={() => setShowEmployeeMenu(false)} title="Opciones">
-             <div className="space-y-4">
-                 <div className="p-4 bg-gray-50 rounded-2xl flex items-center gap-4">
-                      <img src={selectedUser?.avatarUrl} className="w-12 h-12 rounded-full" />
-                      <div>
-                          <p className="font-bold text-gray-900">{selectedUser?.name}</p>
-                          <p className="text-sm text-gray-500">PIN: <span className="font-mono bg-gray-200 px-1 rounded">{selectedUser?.pin}</span></p>
-                      </div>
-                 </div>
-                 
-                 <div className="p-4 bg-red-50 rounded-2xl border border-red-100">
-                     <h4 className="font-bold text-red-700 text-sm mb-2">Zona de Peligro</h4>
-                     <p className="text-xs text-red-600 mb-4">Eliminar este empleado borrará su historial y tareas.</p>
-                     <button onClick={handleDeleteUser} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold shadow-lg shadow-red-500/20 active:scale-95 transition-transform">
-                         Eliminar Empleado
-                     </button>
-                 </div>
+             <div className="p-4 bg-red-50 rounded-2xl border border-red-100">
+                 <button onClick={handleDeleteUser} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold">Eliminar Empleado</button>
              </div>
         </ResponsiveModal>
     </div>
