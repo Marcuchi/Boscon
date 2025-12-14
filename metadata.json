@@ -1,5 +1,5 @@
 {
   "name": "Boscon",
-  "description": "Una aplicación estilo iOS para gestión de tareas diarias y semanales con roles de administrador y empleado, potenciada por IA para la generación de checklists.",
+  "description": "Una aplicación estilo iOS para gestión de tareas diarias y semanales con roles de administrador y empleado.",
   "requestFramePermissions": []
 }

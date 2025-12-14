@@ -1,11 +1,8 @@
-import * as firebaseApp from "firebase/app";
+import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
 // --- CONFIGURACIÓN DE FIREBASE ---
-// 1. Ve a https://console.firebase.google.com/
-// 2. Crea un proyecto
-// 3. Registra una app web
-// 4. Copia las credenciales aquí abajo:
+// https://firebase.google.com/docs/web/setup#available-libraries
 
 const firebaseConfig = {
   apiKey: "AIzaSyD8AIa1xhJHtufzBvyt67h1tNALbX9An94",
@@ -17,6 +14,8 @@ const firebaseConfig = {
   appId: "1:742777584772:web:dd55144e3b0ba7b6a496d1"
 };
 
-// Inicializar Firebase
-const app = firebaseApp.initializeApp(firebaseConfig);
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+
+// Exportar la instancia de Firestore para usarla en dataService.ts
 export const db = getFirestore(app);
