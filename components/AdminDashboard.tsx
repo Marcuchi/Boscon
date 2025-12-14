@@ -1,0 +1,786 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { User, Task, UserRole, TaskFrequency } from '../types';
+import { getUsers, getTasks, saveTask, deleteTask, addUser, deleteUser, isTaskCompletedForDate, isTaskVisibleOnDate, getMondayOfWeek } from '../services/dataService';
+import { PlusIcon, TrashIcon, LogoutIcon, PencilIcon, EllipsisHorizontalIcon, ChevronRightIcon, XMarkIcon, UserIcon } from './ui/Icons';
+
+interface AdminDashboardProps {
+  currentUser: User;
+  onLogout: () => void;
+}
+
+// --- UI COMPONENTS ---
+
+// 1. Responsive Button
+interface ButtonProps { 
+    children: React.ReactNode; 
+    onClick?: () => void; 
+    variant?: 'primary' | 'secondary' | 'danger' | 'ghost'; 
+    className?: string; 
+    disabled?: boolean; 
+    fullWidth?: boolean; 
+}
+
+const Button: React.FC<ButtonProps> = ({ 
+    children, onClick, variant = 'primary', className = '', disabled = false, fullWidth = false 
+}) => {
+    const baseStyle = "px-4 py-3 rounded-xl font-semibold text-sm transition-all active:scale-[0.98] flex items-center justify-center gap-2";
+    const variants = {
+        primary: "bg-blue-600 text-white shadow-lg shadow-blue-500/30 hover:bg-blue-700 disabled:bg-gray-300 disabled:shadow-none",
+        secondary: "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50",
+        danger: "bg-red-50 text-red-600 hover:bg-red-100",
+        ghost: "bg-transparent text-gray-500 hover:bg-gray-100"
+    };
+
+    return (
+        <button 
+            onClick={onClick}
+            disabled={disabled}
+            className={`${baseStyle} ${variants[variant]} ${fullWidth ? 'w-full' : ''} ${className}`}
+        >
+            {children}
+        </button>
+    );
+};
+
+// 2. Modal / Bottom Sheet Wrapper
+interface ModalProps { 
+    isOpen: boolean; 
+    onClose: () => void; 
+    title: string; 
+    children: React.ReactNode; 
+}
+
+const ResponsiveModal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
+            {/* Backdrop */}
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={onClose} />
+            
+            {/* Content Card */}
+            <div className="
+                relative z-10 w-full bg-white 
+                rounded-t-3xl md:rounded-3xl 
+                shadow-2xl 
+                max-h-[90vh] md:max-h-[85vh] 
+                overflow-hidden flex flex-col
+                md:max-w-md lg:max-w-lg
+                animate-[slideUp_0.3s_ease-out] md:animate-[fadeIn_0.2s_ease-out]
+            ">
+                {/* Header */}
+                <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-white/80 backdrop-blur-md sticky top-0 z-20">
+                    <h3 className="text-lg font-bold text-gray-900">{title}</h3>
+                    <button onClick={onClose} className="p-2 bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200">
+                        <XMarkIcon className="w-5 h-5" />
+                    </button>
+                </div>
+
+                {/* Scrollable Body */}
+                <div className="p-6 overflow-y-auto overflow-x-hidden no-scrollbar">
+                    {children}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- HELPER FOR DATES ---
+const getStartOfWeek = (d: Date) => {
+    const date = new Date(d);
+    const day = date.getDay();
+    const diff = date.getDate() - day + (day === 0 ? -6 : 1); // Monday is start
+    const monday = new Date(date.setDate(diff));
+    monday.setHours(0,0,0,0);
+    return monday;
+};
+
+// --- MAIN COMPONENT ---
+
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onLogout }) => {
+  // State
+  const [users, setUsers] = useState<User[]>(getUsers().filter(u => u.role !== UserRole.ADMIN));
+  const [tasks, setTasks] = useState<Task[]>(getTasks());
+  const [selectedUser, setSelectedUser] = useState<User | null>(users[0] || null);
+  
+  // Date State
+  const [viewDate, setViewDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [currentWeekStart, setCurrentWeekStart] = useState<Date>(getStartOfWeek(new Date()));
+  const [browsingMonth, setBrowsingMonth] = useState<Date>(new Date()); // For the month picker
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  
+  // Modal States
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [showEmployeeMenu, setShowEmployeeMenu] = useState(false);
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  
+  // Form States (Task)
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDescription, setNewTaskDescription] = useState('');
+  const [taskFrequency, setTaskFrequency] = useState<TaskFrequency>('DAILY');
+  const [selectedDays, setSelectedDays] = useState<number[]>([]); 
+
+  // Form States (User)
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserPin, setNewUserPin] = useState('');
+  const [newUserPosition, setNewUserPosition] = useState('');
+  const [newUserAvatar, setNewUserAvatar] = useState('');
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const WEEKDAYS_HEADER = ['L', 'M', 'M', 'J', 'V', 'S', 'D']; // Updated for Monday Start
+
+  // --- LOGIC ---
+
+  const refreshTasks = () => setTasks(getTasks());
+  
+  // Filter Logic
+  const userTasks = tasks.filter(t => {
+      if (t.assignedToUserId !== selectedUser?.id) return false;
+      return isTaskVisibleOnDate(t, viewDate);
+  });
+
+  const sortTasks = (taskList: Task[]) => {
+      return taskList.sort((a, b) => {
+          const aCompleted = isTaskCompletedForDate(a, viewDate);
+          const bCompleted = isTaskCompletedForDate(b, viewDate);
+          if (aCompleted === bCompleted) return 0;
+          return aCompleted ? 1 : -1;
+      });
+  };
+
+  const dailyTasks = sortTasks(userTasks.filter(t => t.frequency === 'DAILY'));
+  const weeklyTasks = sortTasks(userTasks.filter(t => t.frequency === 'WEEKLY'));
+
+  // Handlers
+  const handleSaveTask = () => {
+    if (!newTaskTitle.trim() || !selectedUser) return;
+    
+    // Logic mapping: UI index 0 (Lunes) -> Date.getDay() 1. UI index 6 (Dom) -> Date.getDay() 0
+    // But our backend/legacy usually expects 0=Sun, 1=Mon.
+    // Let's ensure repeatDays stores standard JS getDay() indexes (0-6, 0=Sun).
+    // The UI displays L,M,M... (Indices 0..6).
+    // Map UI Index to JS Day Index:
+    // UI 0 (Lun) -> 1
+    // UI 1 (Mar) -> 2
+    // ...
+    // UI 5 (Sab) -> 6
+    // UI 6 (Dom) -> 0
+    
+    const mapUiToJsDay = (uiIdx: number) => uiIdx === 6 ? 0 : uiIdx + 1;
+    
+    const finalRepeatDays = taskFrequency === 'WEEKLY' ? [] : selectedDays.map(mapUiToJsDay);
+
+    const newTask: Task = {
+        id: editingTask ? editingTask.id : Math.random().toString(36).substr(2, 9),
+        title: newTaskTitle,
+        description: newTaskDescription,
+        assignedToUserId: selectedUser.id,
+        frequency: taskFrequency,
+        repeatDays: finalRepeatDays,
+        scheduledDate: (taskFrequency === 'DAILY' && finalRepeatDays.length === 0) ? viewDate : undefined,
+        lastCompletedDate: editingTask ? editingTask.lastCompletedDate : null,
+        createdAt: editingTask ? editingTask.createdAt : Date.now()
+    };
+
+    saveTask(newTask);
+    refreshTasks();
+    setShowAddModal(false);
+    setEditingTask(null);
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+              setNewUserAvatar(reader.result as string);
+          };
+          reader.readAsDataURL(file);
+      }
+  };
+
+  const handleCreateUser = () => {
+      if (!newUserName.trim() || !newUserPin.trim()) return;
+      const avatar = newUserAvatar.trim() || `https://ui-avatars.com/api/?name=${encodeURIComponent(newUserName)}&background=random`;
+      
+      const newUser: User = {
+          id: Math.random().toString(36).substr(2, 9),
+          name: newUserName,
+          role: UserRole.EMPLOYEE,
+          pin: newUserPin,
+          avatarUrl: avatar,
+          position: newUserPosition || 'Empleado'
+      };
+      addUser(newUser);
+      setUsers(getUsers().filter(u => u.role !== UserRole.ADMIN));
+      setSelectedUser(newUser);
+      setShowUserModal(false);
+  };
+
+  const handleDeleteUser = () => {
+      if (selectedUser) {
+          deleteUser(selectedUser.id);
+          const remainingUsers = getUsers().filter(u => u.role !== UserRole.ADMIN);
+          setUsers(remainingUsers);
+          setSelectedUser(remainingUsers[0] || null);
+          setShowEmployeeMenu(false);
+      }
+  };
+
+  const openEditModal = (task: Task) => {
+      setEditingTask(task);
+      setNewTaskTitle(task.title);
+      setNewTaskDescription(task.description || '');
+      setTaskFrequency(task.frequency);
+      
+      // Reverse Map JS Day Index to UI Index for editing
+      // JS 0 (Sun) -> UI 6
+      // JS 1 (Mon) -> UI 0
+      const mapJsToUiDay = (jsIdx: number) => jsIdx === 0 ? 6 : jsIdx - 1;
+      setSelectedDays((task.repeatDays || []).map(mapJsToUiDay));
+      
+      setShowAddModal(true);
+  };
+
+  const toggleDay = (idx: number) => {
+     if(taskFrequency === 'WEEKLY') {
+         setTaskFrequency('DAILY');
+         setSelectedDays([idx]);
+         return;
+     }
+     if (selectedDays.includes(idx)) setSelectedDays(selectedDays.filter(d => d !== idx));
+     else setSelectedDays([...selectedDays, idx].sort());
+  };
+
+  // --- Calendar Helpers ---
+  
+  // Switch Week (Next/Prev)
+  const changeWeek = (offset: number) => {
+      const newStart = new Date(currentWeekStart);
+      newStart.setDate(newStart.getDate() + (offset * 7));
+      setCurrentWeekStart(newStart);
+      // Optional: Auto-select the same relative day in the new week? 
+      // For now, we keep the viewDate as is unless it goes out of view, 
+      // but standard iOS behavior usually just scrolls the view.
+  };
+
+  // Switch Month (for Picker)
+  const changeBrowsingMonth = (offset: number) => {
+      const newDate = new Date(browsingMonth);
+      newDate.setMonth(newDate.getMonth() + offset);
+      setBrowsingMonth(newDate);
+  };
+
+  const handleSelectDateFromPicker = (date: Date) => {
+      const dStr = date.toISOString().split('T')[0];
+      setViewDate(dStr);
+      setCurrentWeekStart(getStartOfWeek(date)); // Jump week view to selected date
+      setShowMonthPicker(false);
+  };
+  
+  // Generate days for current week strip
+  const weekDays = Array.from({length: 7}, (_, i) => {
+      const d = new Date(currentWeekStart);
+      d.setDate(d.getDate() + i);
+      return d;
+  });
+
+  // Generate days for Month Picker
+  const getDaysForMonthPicker = (date: Date) => {
+      const year = date.getFullYear();
+      const month = date.getMonth();
+      const numDays = new Date(year, month + 1, 0).getDate();
+      const firstDay = new Date(year, month, 1).getDay(); // 0 = Sun, 1 = Mon
+      
+      // Calculate padding for start of month (Monday based)
+      // Mon (1) -> 0 padding
+      // Sun (0) -> 6 padding
+      const padding = firstDay === 0 ? 6 : firstDay - 1;
+
+      const days = [];
+      // Empty slots
+      for(let i=0; i<padding; i++) days.push(null);
+      // Real days
+      for(let i=1; i<=numDays; i++) days.push(new Date(year, month, i));
+      
+      return days;
+  };
+
+  // --- HELPER UI FOR DAYS SELECTION ---
+  const getSelectionLabel = () => {
+      if (selectedDays.length === 7) return "Todos los días";
+      if (selectedDays.length === 0) return "Selecciona los días";
+      if (selectedDays.length === 5 && !selectedDays.includes(5) && !selectedDays.includes(6)) return "Entre semana (L-V)";
+      if (selectedDays.length === 2 && selectedDays.includes(5) && selectedDays.includes(6)) return "Fines de semana";
+      return "Días personalizados";
+  };
+  
+  // --- SUB-COMPONENTS ---
+
+  const TaskCard: React.FC<{ task: Task }> = ({ task }) => {
+      const isCompleted = isTaskCompletedForDate(task, viewDate);
+      return (
+        <div 
+            onClick={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}
+            className="group bg-white rounded-2xl p-4 border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer relative overflow-hidden w-full"
+        >
+            <div className="flex items-start justify-between gap-3">
+                
+                {/* Content Column */}
+                <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                    {/* Header Row: Status & Freq */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                        {/* Read-only status badge */}
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${
+                            isCompleted 
+                            ? 'bg-green-50 text-green-700 border-green-100' 
+                            : 'bg-amber-50 text-amber-600 border-amber-100'
+                        }`}>
+                            {isCompleted ? (
+                                <>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                                    Hecho
+                                </>
+                            ) : (
+                                <>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                                    Pendiente
+                                </>
+                            )}
+                        </span>
+                        
+                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                            {task.frequency === 'DAILY' ? 'Diaria' : 'Semanal'}
+                        </span>
+                    </div>
+
+                    {/* Title with overflow protection */}
+                    <h4 className={`text-sm font-semibold text-gray-900 break-words leading-tight ${isCompleted ? 'text-gray-500' : ''}`}>
+                        {task.title}
+                    </h4>
+                </div>
+
+                {/* Actions Column (Edit/Delete) */}
+                <div className="flex items-center gap-1 flex-shrink-0">
+                     <button 
+                        onClick={(e) => { e.stopPropagation(); openEditModal(task); }} 
+                        className="p-2 text-blue-500 hover:bg-blue-50 rounded-xl transition-colors"
+                        title="Editar"
+                     >
+                        <PencilIcon className="w-4 h-4" />
+                     </button>
+                     <button 
+                        onClick={(e) => { e.stopPropagation(); if(confirm('¿Eliminar esta tarea permanentemente?')) { deleteTask(task.id); refreshTasks(); } }} 
+                        className="p-2 text-red-400 hover:bg-red-50 rounded-xl transition-colors"
+                        title="Eliminar"
+                     >
+                        <TrashIcon className="w-4 h-4" />
+                     </button>
+                </div>
+            </div>
+            
+            {/* Description Expansion */}
+            {expandedTaskId === task.id && (
+                <div className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-600 animate-[fadeIn_0.2s] break-words">
+                    <p className="font-semibold text-gray-400 text-[10px] uppercase mb-1">Descripción</p>
+                    {task.description || "No hay descripción detallada."}
+                </div>
+            )}
+        </div>
+      );
+  };
+
+  return (
+    <div className="flex h-screen w-full overflow-hidden bg-[#F2F2F7]">
+        
+        {/* --- SIDEBAR (Desktop) --- */}
+        <aside className="hidden md:flex flex-col w-72 bg-white border-r border-gray-200 h-full flex-shrink-0">
+            <div className="p-6 border-b border-gray-100">
+                <h1 className="text-xl font-bold tracking-tight text-gray-900">Boscon <span className="text-blue-600">.Admin</span></h1>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 space-y-1">
+                <p className="px-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Equipo</p>
+                {users.map(u => (
+                    <button 
+                        key={u.id}
+                        onClick={() => setSelectedUser(u)}
+                        className={`w-full flex items-center gap-3 p-2 rounded-xl text-left transition-colors ${selectedUser?.id === u.id ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                    >
+                        <img src={u.avatarUrl} className="w-9 h-9 rounded-full bg-gray-200 object-cover" />
+                        <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold truncate">{u.name}</p>
+                            <p className="text-xs text-gray-400 truncate">{u.position}</p>
+                        </div>
+                        {selectedUser?.id === u.id && <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />}
+                    </button>
+                ))}
+                
+                <button onClick={() => { setNewUserName(''); setNewUserPin(''); setNewUserAvatar(''); setShowUserModal(true); }} className="w-full flex items-center gap-3 p-2 mt-4 rounded-xl border border-dashed border-gray-300 text-gray-500 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-700 transition-all">
+                    <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center"><PlusIcon className="w-5 h-5" /></div>
+                    <span className="text-sm font-medium">Agregar Empleado</span>
+                </button>
+            </div>
+
+            <div className="p-4 border-t border-gray-200">
+                <button onClick={onLogout} className="w-full flex items-center gap-2 p-2 text-sm text-gray-500 hover:text-red-600 transition-colors">
+                    <LogoutIcon className="w-5 h-5" /> Cerrar Sesión
+                </button>
+            </div>
+        </aside>
+
+        {/* --- MAIN CONTENT --- */}
+        <main className="flex-1 flex flex-col h-full overflow-hidden relative">
+            
+            {/* Header (Mobile) */}
+            <div className="md:hidden bg-white/80 backdrop-blur-md z-20 sticky top-0 border-b border-gray-200">
+                <div className="flex justify-between items-center px-4 py-3">
+                    <h1 className="font-bold text-lg">Admin</h1>
+                    <button onClick={onLogout}><LogoutIcon className="w-5 h-5 text-gray-600" /></button>
+                </div>
+                {/* Horizontal User List Mobile */}
+                <div className="flex gap-4 overflow-x-auto px-4 pb-3 no-scrollbar">
+                    {users.map(u => (
+                        <div key={u.id} onClick={() => setSelectedUser(u)} className="flex flex-col items-center gap-1 flex-shrink-0 cursor-pointer">
+                            <div className={`w-14 h-14 rounded-full p-0.5 ${selectedUser?.id === u.id ? 'bg-gradient-to-tr from-blue-500 to-cyan-400' : 'bg-transparent'}`}>
+                                <img src={u.avatarUrl} className="w-full h-full rounded-full border-2 border-white object-cover" />
+                            </div>
+                            <span className="text-[10px] font-medium text-gray-600 truncate max-w-[60px]">{u.name.split(' ')[0]}</span>
+                        </div>
+                    ))}
+                    <button onClick={() => { setNewUserName(''); setNewUserPin(''); setNewUserAvatar(''); setShowUserModal(true); }} className="flex flex-col items-center gap-1 flex-shrink-0">
+                        <div className="w-14 h-14 rounded-full border border-dashed border-gray-400 flex items-center justify-center bg-gray-50"><PlusIcon className="w-6 h-6 text-gray-400" /></div>
+                        <span className="text-[10px] font-medium text-gray-400">Nuevo</span>
+                    </button>
+                </div>
+            </div>
+
+            {/* Content Scrollable Area */}
+            {selectedUser ? (
+                <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
+                    
+                    {/* Desktop Header */}
+                    <div className="hidden md:flex justify-between items-center">
+                        <div>
+                            <h2 className="text-2xl font-bold text-gray-900">{selectedUser.name}</h2>
+                            <p className="text-gray-500">{selectedUser.position || 'Miembro del equipo'}</p>
+                        </div>
+                        <div className="flex gap-2">
+                             <Button onClick={() => { 
+                                 setEditingTask(null); setNewTaskTitle(''); setNewTaskDescription(''); setTaskFrequency('DAILY'); setSelectedDays([]); 
+                                 setShowAddModal(true); 
+                             }}>Nueva Tarea</Button>
+                             <button onClick={() => setShowEmployeeMenu(true)} className="p-3 bg-white border border-gray-200 rounded-xl hover:bg-gray-50"><EllipsisHorizontalIcon className="w-5 h-5 text-gray-600" /></button>
+                        </div>
+                    </div>
+
+                    {/* NEW: Weekly Calendar Strip */}
+                    <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-200/60">
+                         {/* Controls */}
+                         <div className="flex justify-between items-center mb-4 px-1">
+                            <button onClick={() => changeWeek(-1)} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500">
+                                <div className="rotate-180"><ChevronRightIcon className="w-5 h-5" /></div>
+                            </button>
+                            
+                            {/* Clickable Month Title */}
+                            <button 
+                                onClick={() => { setBrowsingMonth(currentWeekStart); setShowMonthPicker(true); }}
+                                className="text-base font-bold text-gray-900 capitalize flex items-center gap-2 hover:bg-gray-50 px-3 py-1 rounded-lg transition-colors"
+                            >
+                                {currentWeekStart.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
+                                <span className="text-blue-500 text-xs bg-blue-50 px-2 py-0.5 rounded-full">Cambiar</span>
+                            </button>
+
+                            <button onClick={() => changeWeek(1)} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500">
+                                <ChevronRightIcon className="w-5 h-5" />
+                            </button>
+                         </div>
+                         
+                         {/* 7-Day Grid (Fixed, not scrollable) */}
+                         <div className="grid grid-cols-7 gap-1 md:gap-3">
+                             {weekDays.map(date => {
+                                 const dStr = date.toISOString().split('T')[0];
+                                 const isSelected = viewDate === dStr;
+                                 const hasTask = tasks.some(t => t.assignedToUserId === selectedUser.id && isTaskVisibleOnDate(t, dStr));
+                                 const isToday = dStr === new Date().toISOString().split('T')[0];
+                                 
+                                 return (
+                                     <button 
+                                        key={dStr} onClick={() => setViewDate(dStr)}
+                                        className={`flex flex-col items-center justify-center py-3 rounded-2xl transition-all relative ${
+                                            isSelected 
+                                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30 scale-105' 
+                                            : 'bg-transparent text-gray-500 hover:bg-gray-50'
+                                        }`}
+                                     >
+                                        <span className={`text-[10px] font-bold uppercase mb-1 ${isSelected ? 'text-blue-200' : 'text-gray-400'}`}>
+                                            {WEEKDAYS_HEADER[date.getDay() === 0 ? 6 : date.getDay() - 1]}
+                                        </span>
+                                        <span className={`text-lg font-bold leading-none ${isToday && !isSelected ? 'text-blue-600' : ''}`}>
+                                            {date.getDate()}
+                                        </span>
+                                        
+                                        {/* Indicators */}
+                                        <div className="flex gap-0.5 mt-1.5 h-1">
+                                            {isToday && !isSelected && <span className="w-1 h-1 rounded-full bg-blue-600" title="Hoy" />}
+                                            {hasTask && <span className={`w-1 h-1 rounded-full ${isSelected ? 'bg-white' : 'bg-gray-400'}`} />}
+                                        </div>
+                                     </button>
+                                 )
+                             })}
+                         </div>
+                    </div>
+
+                    {/* Tasks Container */}
+                    <div className="space-y-6 pb-20 md:pb-0">
+                        {dailyTasks.length > 0 && (
+                            <div>
+                                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 ml-1">Tareas Diarias</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                                    {dailyTasks.map(t => <TaskCard key={t.id} task={t} />)}
+                                </div>
+                            </div>
+                        )}
+                        
+                        {weeklyTasks.length > 0 && (
+                            <div>
+                                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 ml-1">Tareas Semanales</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                                    {weeklyTasks.map(t => <TaskCard key={t.id} task={t} />)}
+                                </div>
+                            </div>
+                        )}
+
+                        {dailyTasks.length === 0 && weeklyTasks.length === 0 && (
+                            <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-3">
+                                    <span className="text-2xl">😴</span>
+                                </div>
+                                <p className="text-sm">Sin tareas asignadas para este día.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            ) : (
+                <div className="flex-1 flex items-center justify-center text-gray-400 p-8 text-center">
+                    Selecciona un empleado del menú para comenzar.
+                </div>
+            )}
+
+            {/* Mobile Floating Action Button */}
+            {selectedUser && (
+                <div className="md:hidden absolute bottom-6 right-6">
+                    <button 
+                        onClick={() => { 
+                             setEditingTask(null); setNewTaskTitle(''); setNewTaskDescription(''); setTaskFrequency('DAILY'); setSelectedDays([]); 
+                             setShowAddModal(true); 
+                        }}
+                        className="w-14 h-14 bg-blue-600 rounded-full text-white shadow-xl shadow-blue-600/40 flex items-center justify-center active:scale-90 transition-transform"
+                    >
+                        <PlusIcon className="w-7 h-7" />
+                    </button>
+                </div>
+            )}
+        </main>
+
+        {/* --- MODALS --- */}
+        
+        {/* Month Picker Modal */}
+        <ResponsiveModal isOpen={showMonthPicker} onClose={() => setShowMonthPicker(false)} title="Seleccionar Fecha">
+            <div className="space-y-4">
+                 <div className="flex justify-between items-center mb-4">
+                     <button onClick={() => changeBrowsingMonth(-1)} className="p-2 rounded-full hover:bg-gray-100"><div className="rotate-180"><ChevronRightIcon className="w-5 h-5 text-gray-600"/></div></button>
+                     <h3 className="font-bold text-lg capitalize">{browsingMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}</h3>
+                     <button onClick={() => changeBrowsingMonth(1)} className="p-2 rounded-full hover:bg-gray-100"><ChevronRightIcon className="w-5 h-5 text-gray-600"/></button>
+                 </div>
+                 
+                 <div className="grid grid-cols-7 gap-2 text-center mb-2">
+                     {WEEKDAYS_HEADER.map(d => <span key={d} className="text-xs font-bold text-gray-400">{d}</span>)}
+                 </div>
+                 
+                 <div className="grid grid-cols-7 gap-2">
+                     {getDaysForMonthPicker(browsingMonth).map((d, i) => {
+                         if (!d) return <div key={i} />;
+                         const dStr = d.toISOString().split('T')[0];
+                         const isSelected = viewDate === dStr;
+                         const isToday = dStr === new Date().toISOString().split('T')[0];
+                         
+                         return (
+                             <button 
+                                key={dStr} 
+                                onClick={() => handleSelectDateFromPicker(d)}
+                                className={`
+                                    h-10 w-full rounded-full flex items-center justify-center text-sm font-semibold transition-all
+                                    ${isSelected ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-900'}
+                                    ${isToday && !isSelected ? 'text-blue-600 border border-blue-200' : ''}
+                                `}
+                             >
+                                 {d.getDate()}
+                             </button>
+                         )
+                     })}
+                 </div>
+                 
+                 <Button variant="ghost" fullWidth onClick={() => {
+                     const today = new Date();
+                     handleSelectDateFromPicker(today);
+                     setBrowsingMonth(today);
+                 }}>
+                     Ir a Hoy
+                 </Button>
+            </div>
+        </ResponsiveModal>
+
+        {/* 1. Add/Edit Task Modal */}
+        <ResponsiveModal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title={editingTask ? 'Editar Tarea' : 'Nueva Tarea'}>
+             <div className="space-y-5">
+                 <div>
+                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Título</label>
+                     <input 
+                        type="text" 
+                        value={newTaskTitle} 
+                        onChange={e => setNewTaskTitle(e.target.value)} 
+                        className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                        placeholder="Ej. Limpiar vidrios"
+                     />
+                 </div>
+                 <div>
+                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Descripción</label>
+                     <textarea 
+                        value={newTaskDescription} 
+                        onChange={e => setNewTaskDescription(e.target.value)} 
+                        className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all h-24 resize-none"
+                        placeholder="Detalles adicionales..."
+                     />
+                 </div>
+                 
+                 {/* Custom Segmented Control */}
+                 <div className="bg-gray-100 p-1 rounded-xl flex">
+                     <button onClick={() => setTaskFrequency('DAILY')} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${taskFrequency === 'DAILY' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>Diaria</button>
+                     <button onClick={() => setTaskFrequency('WEEKLY')} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${taskFrequency === 'WEEKLY' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>Semanal</button>
+                 </div>
+
+                 {/* Refactored Day Selector */}
+                 <div className={`transition-all duration-300 ${taskFrequency === 'WEEKLY' ? 'opacity-40 pointer-events-none grayscale' : 'opacity-100'}`}>
+                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 block">
+                        Días de Repetición
+                     </label>
+                     <div className="grid grid-cols-7 gap-2">
+                         {WEEKDAYS_HEADER.map((d, i) => {
+                             const isActive = selectedDays.includes(i);
+                             return (
+                                 <button 
+                                    key={i} onClick={() => toggleDay(i)}
+                                    className={`
+                                        aspect-square rounded-full flex items-center justify-center text-xs sm:text-sm font-bold transition-all duration-200
+                                        ${isActive 
+                                            ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30 scale-100' 
+                                            : 'bg-gray-100 text-gray-400 hover:bg-gray-200 scale-95'
+                                        }
+                                    `}
+                                 >
+                                     {d}
+                                 </button>
+                             )
+                         })}
+                     </div>
+                     <p className="text-[10px] text-gray-400 mt-2 text-center h-4 font-medium transition-all">
+                        {getSelectionLabel()}
+                     </p>
+                 </div>
+
+                 <Button fullWidth onClick={handleSaveTask} disabled={!newTaskTitle.trim()}>Guardar Tarea</Button>
+             </div>
+        </ResponsiveModal>
+
+        {/* 2. User Modal */}
+        <ResponsiveModal isOpen={showUserModal} onClose={() => setShowUserModal(false)} title="Nuevo Empleado">
+            <div className="space-y-4">
+                 <div>
+                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Nombre</label>
+                     <input type="text" value={newUserName} onChange={e => setNewUserName(e.target.value)} className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ej. Ana Pérez" />
+                 </div>
+                 <div>
+                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Contraseña</label>
+                     <input type="text" value={newUserPin} onChange={e => setNewUserPin(e.target.value)} className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Contraseña segura" />
+                 </div>
+                 
+                 {/* Image Upload Section */}
+                 <div>
+                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Foto de Perfil (Opcional)</label>
+                     <div className="flex items-center gap-4 mt-2">
+                         <div className="relative">
+                             <div className="w-16 h-16 rounded-full bg-gray-100 overflow-hidden border border-gray-200 flex-shrink-0">
+                                 {newUserAvatar ? (
+                                     <img src={newUserAvatar} alt="Preview" className="w-full h-full object-cover" />
+                                 ) : (
+                                     <div className="w-full h-full flex items-center justify-center text-gray-400 bg-gray-50">
+                                         <UserIcon className="w-8 h-8" />
+                                     </div>
+                                 )}
+                             </div>
+                             {newUserAvatar && (
+                                 <button 
+                                     onClick={() => setNewUserAvatar('')}
+                                     className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600 transition-colors"
+                                     title="Quitar foto"
+                                 >
+                                     <XMarkIcon className="w-3 h-3" />
+                                 </button>
+                             )}
+                         </div>
+
+                         <div>
+                             <input 
+                                 type="file" 
+                                 id="avatar-upload"
+                                 accept="image/*"
+                                 className="hidden"
+                                 onChange={handleImageUpload}
+                             />
+                             <label 
+                                 htmlFor="avatar-upload" 
+                                 className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 rounded-xl text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 cursor-pointer transition-colors"
+                             >
+                                 Subir Imagen
+                             </label>
+                             <p className="text-[10px] text-gray-400 mt-1">
+                                 Deja vacío para usar avatar automático.
+                             </p>
+                         </div>
+                     </div>
+                 </div>
+
+                 <div>
+                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Puesto</label>
+                     <input type="text" value={newUserPosition} onChange={e => setNewUserPosition(e.target.value)} className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ej. Cocinero" />
+                 </div>
+                 <Button fullWidth onClick={handleCreateUser} disabled={!newUserName || newUserPin.length < 1}>Crear Empleado</Button>
+            </div>
+        </ResponsiveModal>
+
+        {/* 3. Employee Options Menu (Mobile Bottom Sheet / Desktop Modal) */}
+        <ResponsiveModal isOpen={showEmployeeMenu} onClose={() => setShowEmployeeMenu(false)} title="Opciones">
+             <div className="space-y-4">
+                 <div className="p-4 bg-gray-50 rounded-2xl flex items-center gap-4">
+                      <img src={selectedUser?.avatarUrl} className="w-12 h-12 rounded-full" />
+                      <div>
+                          <p className="font-bold text-gray-900">{selectedUser?.name}</p>
+                          <p className="text-sm text-gray-500">PIN: <span className="font-mono bg-gray-200 px-1 rounded">{selectedUser?.pin}</span></p>
+                      </div>
+                 </div>
+                 
+                 <div className="p-4 bg-red-50 rounded-2xl border border-red-100">
+                     <h4 className="font-bold text-red-700 text-sm mb-2">Zona de Peligro</h4>
+                     <p className="text-xs text-red-600 mb-4">Eliminar este empleado borrará su historial y tareas.</p>
+                     <button onClick={handleDeleteUser} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold shadow-lg shadow-red-500/20 active:scale-95 transition-transform">
+                         Eliminar Empleado
+                     </button>
+                 </div>
+             </div>
+        </ResponsiveModal>
+    </div>
+  );
+};
