@@ -108,17 +108,33 @@ export const getMondayOfWeek = (dateStr: string) => {
 
 export const isTaskCompletedForDate = (task: Task, viewDateStr: string): boolean => {
     if (!task.lastCompletedDate) return false;
+    
+    // If it's weekly, we check if it was completed ANY time during the viewDate's week
+    if (task.frequency === 'WEEKLY') {
+        const completionWeek = getMondayOfWeek(task.lastCompletedDate);
+        const viewWeek = getMondayOfWeek(viewDateStr);
+        return completionWeek === viewWeek;
+    }
 
-    // Daily tasks or tasks with repeat days needs to match exact date completion
-    // The simplified logic assumes a task reappears fresh on its next scheduled day
+    // Daily tasks need exact match
     return task.lastCompletedDate === viewDateStr;
 };
 
 export const isTaskVisibleOnDate = (task: Task, dateStr: string): boolean => {
-    // 0. Weekly tasks are always visible in the weekly list, regardless of the specific date selected
-    // (They are "Tasks for this week")
+    // 0. Weekly tasks logic:
+    // Only visible if the viewDate falls within the SAME WEEK as the creation date.
     if (task.frequency === 'WEEKLY') {
-        return true;
+        // Convert timestamp to YYYY-MM-DD for consistency
+        const createdDate = new Date(task.createdAt);
+        const y = createdDate.getFullYear();
+        const m = String(createdDate.getMonth() + 1).padStart(2, '0');
+        const d = String(createdDate.getDate()).padStart(2, '0');
+        const createdDateStr = `${y}-${m}-${d}`;
+
+        const createdWeekStart = getMondayOfWeek(createdDateStr);
+        const viewWeekStart = getMondayOfWeek(dateStr);
+
+        return createdWeekStart === viewWeekStart;
     }
 
     const [y, m, d] = dateStr.split('-').map(Number);
@@ -136,6 +152,5 @@ export const isTaskVisibleOnDate = (task: Task, dateStr: string): boolean => {
         return task.scheduledDate === dateStr;
     }
 
-    // Fallback for legacy data without scheduledDate or repeatDays
     return false;
 };

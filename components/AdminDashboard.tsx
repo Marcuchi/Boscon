@@ -157,17 +157,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const handleSaveTask = () => {
     if (!newTaskTitle.trim() || !selectedUser) return;
     
-    // Logic mapping: UI index 0 (Lunes) -> Date.getDay() 1. UI index 6 (Dom) -> Date.getDay() 0
-    // But our backend/legacy usually expects 0=Sun, 1=Mon.
-    // Let's ensure repeatDays stores standard JS getDay() indexes (0-6, 0=Sun).
-    // The UI displays L,M,M... (Indices 0..6).
-    // Map UI Index to JS Day Index:
-    // UI 0 (Lun) -> 1
-    // UI 1 (Mar) -> 2
-    // ...
-    // UI 5 (Sab) -> 6
-    // UI 6 (Dom) -> 0
-    
+    // Map UI Index to JS Day Index (0-6 Sun)
     const mapUiToJsDay = (uiIdx: number) => uiIdx === 6 ? 0 : uiIdx + 1;
     
     const finalRepeatDays = taskFrequency === 'WEEKLY' ? [] : selectedDays.map(mapUiToJsDay);
@@ -181,6 +171,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
         repeatDays: finalRepeatDays,
         scheduledDate: (taskFrequency === 'DAILY' && finalRepeatDays.length === 0) ? viewDate : undefined,
         lastCompletedDate: editingTask ? editingTask.lastCompletedDate : null,
+        // Important: Use Date.now() for creation. 
+        // Logic in dataService ensures 'WEEKLY' tasks are only visible in the week of this timestamp.
         createdAt: editingTask ? editingTask.createdAt : Date.now()
     };
 
@@ -235,9 +227,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
       setNewTaskDescription(task.description || '');
       setTaskFrequency(task.frequency);
       
-      // Reverse Map JS Day Index to UI Index for editing
-      // JS 0 (Sun) -> UI 6
-      // JS 1 (Mon) -> UI 0
       const mapJsToUiDay = (jsIdx: number) => jsIdx === 0 ? 6 : jsIdx - 1;
       setSelectedDays((task.repeatDays || []).map(mapJsToUiDay));
       
@@ -255,18 +244,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   };
 
   // --- Calendar Helpers ---
-  
-  // Switch Week (Next/Prev)
   const changeWeek = (offset: number) => {
       const newStart = new Date(currentWeekStart);
       newStart.setDate(newStart.getDate() + (offset * 7));
       setCurrentWeekStart(newStart);
-      // Optional: Auto-select the same relative day in the new week? 
-      // For now, we keep the viewDate as is unless it goes out of view, 
-      // but standard iOS behavior usually just scrolls the view.
   };
 
-  // Switch Month (for Picker)
   const changeBrowsingMonth = (offset: number) => {
       const newDate = new Date(browsingMonth);
       newDate.setMonth(newDate.getMonth() + offset);
@@ -276,39 +259,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const handleSelectDateFromPicker = (date: Date) => {
       const dStr = date.toISOString().split('T')[0];
       setViewDate(dStr);
-      setCurrentWeekStart(getStartOfWeek(date)); // Jump week view to selected date
+      setCurrentWeekStart(getStartOfWeek(date));
       setShowMonthPicker(false);
   };
   
-  // Generate days for current week strip
   const weekDays = Array.from({length: 7}, (_, i) => {
       const d = new Date(currentWeekStart);
       d.setDate(d.getDate() + i);
       return d;
   });
 
-  // Generate days for Month Picker
   const getDaysForMonthPicker = (date: Date) => {
       const year = date.getFullYear();
       const month = date.getMonth();
       const numDays = new Date(year, month + 1, 0).getDate();
       const firstDay = new Date(year, month, 1).getDay(); // 0 = Sun, 1 = Mon
-      
-      // Calculate padding for start of month (Monday based)
-      // Mon (1) -> 0 padding
-      // Sun (0) -> 6 padding
       const padding = firstDay === 0 ? 6 : firstDay - 1;
 
       const days = [];
-      // Empty slots
       for(let i=0; i<padding; i++) days.push(null);
-      // Real days
       for(let i=1; i<=numDays; i++) days.push(new Date(year, month, i));
-      
       return days;
   };
 
-  // --- HELPER UI FOR DAYS SELECTION ---
+  // --- UI HELPERS ---
   const getSelectionLabel = () => {
       if (selectedDays.length === 7) return "Todos los días";
       if (selectedDays.length === 0) return "Selecciona los días";
@@ -327,12 +301,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
             className="group bg-white rounded-2xl p-4 border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer relative overflow-hidden w-full"
         >
             <div className="flex items-start justify-between gap-3">
-                
-                {/* Content Column */}
                 <div className="flex-1 min-w-0 flex flex-col gap-1.5">
-                    {/* Header Row: Status & Freq */}
                     <div className="flex items-center gap-2 flex-wrap">
-                        {/* Read-only status badge */}
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${
                             isCompleted 
                             ? 'bg-green-50 text-green-700 border-green-100' 
@@ -356,13 +326,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                         </span>
                     </div>
 
-                    {/* Title with overflow protection */}
                     <h4 className={`text-sm font-semibold text-gray-900 break-words leading-tight ${isCompleted ? 'text-gray-500' : ''}`}>
                         {task.title}
                     </h4>
                 </div>
 
-                {/* Actions Column (Edit/Delete) */}
                 <div className="flex items-center gap-1 flex-shrink-0">
                      <button 
                         onClick={(e) => { e.stopPropagation(); openEditModal(task); }} 
@@ -381,7 +349,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                 </div>
             </div>
             
-            {/* Description Expansion */}
             {expandedTaskId === task.id && (
                 <div className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-600 animate-[fadeIn_0.2s] break-words">
                     <p className="font-semibold text-gray-400 text-[10px] uppercase mb-1">Descripción</p>
@@ -663,32 +630,41 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                  </div>
 
                  {/* Refactored Day Selector */}
-                 <div className={`transition-all duration-300 ${taskFrequency === 'WEEKLY' ? 'opacity-40 pointer-events-none grayscale' : 'opacity-100'}`}>
-                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 block">
-                        Días de Repetición
-                     </label>
-                     <div className="grid grid-cols-7 gap-2">
-                         {WEEKDAYS_HEADER.map((d, i) => {
-                             const isActive = selectedDays.includes(i);
-                             return (
-                                 <button 
-                                    key={i} onClick={() => toggleDay(i)}
-                                    className={`
-                                        aspect-square rounded-full flex items-center justify-center text-xs sm:text-sm font-bold transition-all duration-200
-                                        ${isActive 
-                                            ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30 scale-100' 
-                                            : 'bg-gray-100 text-gray-400 hover:bg-gray-200 scale-95'
-                                        }
-                                    `}
-                                 >
-                                     {d}
-                                 </button>
-                             )
-                         })}
-                     </div>
-                     <p className="text-[10px] text-gray-400 mt-2 text-center h-4 font-medium transition-all">
-                        {getSelectionLabel()}
-                     </p>
+                 <div className={`transition-all duration-300 ${taskFrequency === 'WEEKLY' ? 'opacity-40 grayscale' : 'opacity-100'}`}>
+                     {taskFrequency === 'WEEKLY' ? (
+                         <div className="text-center p-4 bg-blue-50 text-blue-800 rounded-xl border border-blue-100">
+                             <p className="text-sm font-semibold">Tarea de una sola vez</p>
+                             <p className="text-xs mt-1 opacity-80">Visible solo durante la semana actual.</p>
+                         </div>
+                     ) : (
+                         <>
+                            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 block">
+                                Días de Repetición
+                            </label>
+                            <div className="grid grid-cols-7 gap-2">
+                                {WEEKDAYS_HEADER.map((d, i) => {
+                                    const isActive = selectedDays.includes(i);
+                                    return (
+                                        <button 
+                                            key={i} onClick={() => toggleDay(i)}
+                                            className={`
+                                                aspect-square rounded-full flex items-center justify-center text-xs sm:text-sm font-bold transition-all duration-200
+                                                ${isActive 
+                                                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30 scale-100' 
+                                                    : 'bg-gray-100 text-gray-400 hover:bg-gray-200 scale-95'
+                                                }
+                                            `}
+                                        >
+                                            {d}
+                                        </button>
+                                    )
+                                })}
+                            </div>
+                            <p className="text-[10px] text-gray-400 mt-2 text-center h-4 font-medium transition-all">
+                                {getSelectionLabel()}
+                            </p>
+                         </>
+                     )}
                  </div>
 
                  <Button fullWidth onClick={handleSaveTask} disabled={!newTaskTitle.trim()}>Guardar Tarea</Button>
