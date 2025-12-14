@@ -1,23 +1,19 @@
 import { User, Task, UserRole } from '../types';
-import { db } from './firebase'; // Importa la instancia de Firestore configurada
+import { db } from './firebase'; 
 import { 
-  collection, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  onSnapshot, 
+  ref, 
+  set, 
+  get, 
+  onValue, 
+  remove, 
+  update, 
   query, 
-  where, 
-  getDocs,
-  writeBatch,
-  setDoc,
-  getDoc,
-  limit
-} from "firebase/firestore";
+  orderByChild, 
+  equalTo 
+} from "firebase/database";
 
-const USERS_COLLECTION = 'users';
-const TASKS_COLLECTION = 'tasks';
+const USERS_PATH = 'users';
+const TASKS_PATH = 'tasks';
 
 // Initial Mock Data for Seeding
 const INITIAL_USERS: User[] = [
@@ -37,33 +33,28 @@ let cachedUsers: User[] = [];
 // --- SEED DATABASE ---
 export const initializeData = async () => {
   try {
-    // Optimización: Usamos limit(1) para verificar existencia rápidamente sin descargar todo
-    const usersRef = collection(db, USERS_COLLECTION);
-    const q = query(usersRef, limit(1));
-    const usersSnap = await getDocs(q);
-    
-    if (usersSnap.empty) {
-      console.log("Seeding Users...");
-      const batch = writeBatch(db);
+    const usersRef = ref(db, USERS_PATH);
+    const snapshot = await get(usersRef);
+
+    if (!snapshot.exists()) {
+      console.log("Seeding Users to RTDB...");
+      const updates: any = {};
       INITIAL_USERS.forEach(user => {
-        const userRef = doc(db, USERS_COLLECTION, user.id); 
-        batch.set(userRef, user);
+        updates[`${USERS_PATH}/${user.id}`] = user;
       });
-      await batch.commit();
+      await update(ref(db), updates);
     }
 
-    const tasksRef = collection(db, TASKS_COLLECTION);
-    const qTasks = query(tasksRef, limit(1));
-    const tasksSnap = await getDocs(qTasks);
+    const tasksRef = ref(db, TASKS_PATH);
+    const tasksSnapshot = await get(tasksRef);
 
-    if (tasksSnap.empty) {
-      console.log("Seeding Tasks...");
-      const batch = writeBatch(db);
+    if (!tasksSnapshot.exists()) {
+      console.log("Seeding Tasks to RTDB...");
+      const updates: any = {};
       INITIAL_TASKS.forEach(task => {
-         const taskRef = doc(db, TASKS_COLLECTION, task.id);
-         batch.set(taskRef, task);
+         updates[`${TASKS_PATH}/${task.id}`] = task;
       });
-      await batch.commit();
+      await update(ref(db), updates);
     }
   } catch (e) {
     console.error("Error initializing data:", e);
@@ -73,31 +64,25 @@ export const initializeData = async () => {
 // --- REAL-TIME SUBSCRIPTIONS ---
 
 export const subscribeToUsers = (callback: (users: User[]) => void, onError?: (error: any) => void) => {
-  const q = query(collection(db, USERS_COLLECTION));
-  // onSnapshot es rápido y maneja caché local automáticamente
-  return onSnapshot(q, 
-    (snapshot) => {
-      const users: User[] = [];
-      snapshot.forEach((doc) => {
-        users.push({ ...doc.data(), id: doc.id } as User);
-      });
-      cachedUsers = users;
-      callback(users);
-    }, 
-    (error) => {
-      console.error("Error subscribing to users:", error);
-      if (onError) onError(error);
-    }
-  );
+  const usersRef = ref(db, USERS_PATH);
+  
+  return onValue(usersRef, (snapshot) => {
+    const data = snapshot.val();
+    const users: User[] = data ? Object.values(data) : [];
+    cachedUsers = users;
+    callback(users);
+  }, (error) => {
+    console.error("Error subscribing to users:", error);
+    if (onError) onError(error);
+  });
 };
 
 export const subscribeToTasks = (callback: (tasks: Task[]) => void) => {
-  const q = query(collection(db, TASKS_COLLECTION));
-  return onSnapshot(q, (snapshot) => {
-    const tasks: Task[] = [];
-    snapshot.forEach((doc) => {
-      tasks.push({ ...doc.data(), id: doc.id } as Task);
-    });
+  const tasksRef = ref(db, TASKS_PATH);
+  
+  return onValue(tasksRef, (snapshot) => {
+    const data = snapshot.val();
+    const tasks: Task[] = data ? Object.values(data) : [];
     callback(tasks);
   });
 };
@@ -106,11 +91,8 @@ export const subscribeToTasks = (callback: (tasks: Task[]) => void) => {
 
 export const addUser = async (user: User) => {
   try {
-    if(user.id) {
-        await setDoc(doc(db, USERS_COLLECTION, user.id), user);
-    } else {
-        await addDoc(collection(db, USERS_COLLECTION), user);
-    }
+    // Usamos el ID del usuario como clave en el nodo
+    await set(ref(db, `${USERS_PATH}/${user.id}`), user);
   } catch (e) {
       console.error("Error adding user", e);
   }
@@ -118,12 +100,23 @@ export const addUser = async (user: User) => {
 
 export const deleteUser = async (userId: string) => {
   try {
-    await deleteDoc(doc(db, USERS_COLLECTION, userId));
-    const q = query(collection(db, TASKS_COLLECTION), where("assignedToUserId", "==", userId));
-    const snap = await getDocs(q);
-    const batch = writeBatch(db);
-    snap.forEach(d => batch.delete(d.ref));
-    await batch.commit();
+    // 1. Eliminar usuario
+    await remove(ref(db, `${USERS_PATH}/${userId}`));
+
+    // 2. Eliminar tareas asignadas a este usuario
+    // En RTDB es mejor traer las tareas, filtrar y borrar, o usar una query si hay muchas.
+    // Aquí hacemos query simple.
+    const tasksRef = ref(db, TASKS_PATH);
+    const userTasksQuery = query(tasksRef, orderByChild('assignedToUserId'), equalTo(userId));
+    const snapshot = await get(userTasksQuery);
+    
+    if (snapshot.exists()) {
+        const updates: any = {};
+        snapshot.forEach((childSnapshot) => {
+            updates[`${TASKS_PATH}/${childSnapshot.key}`] = null;
+        });
+        await update(ref(db), updates);
+    }
   } catch (e) {
       console.error("Error deleting user", e);
   }
@@ -131,8 +124,7 @@ export const deleteUser = async (userId: string) => {
 
 export const saveTask = async (task: Task) => {
   try {
-    const taskRef = doc(db, TASKS_COLLECTION, task.id);
-    await setDoc(taskRef, task, { merge: true });
+    await set(ref(db, `${TASKS_PATH}/${task.id}`), task);
     return task;
   } catch (e) {
       console.error("Error saving task", e);
@@ -142,7 +134,7 @@ export const saveTask = async (task: Task) => {
 
 export const deleteTask = async (taskId: string) => {
   try {
-    await deleteDoc(doc(db, TASKS_COLLECTION, taskId));
+    await remove(ref(db, `${TASKS_PATH}/${taskId}`));
   } catch(e) {
       console.error("Error deleting task", e);
   }
@@ -150,11 +142,11 @@ export const deleteTask = async (taskId: string) => {
 
 export const toggleTaskCompletion = async (taskId: string) => {
   try {
-    const ref = doc(db, TASKS_COLLECTION, taskId);
-    const snap = await getDoc(ref);
+    const taskRef = ref(db, `${TASKS_PATH}/${taskId}`);
+    const snapshot = await get(taskRef);
     
-    if (snap.exists()) {
-        const task = snap.data() as Task;
+    if (snapshot.exists()) {
+        const task = snapshot.val() as Task;
         const today = new Date().toISOString().split('T')[0];
         let newDate: string | null = today;
         
@@ -162,7 +154,7 @@ export const toggleTaskCompletion = async (taskId: string) => {
             newDate = null;
         }
         
-        await updateDoc(ref, { lastCompletedDate: newDate });
+        await update(taskRef, { lastCompletedDate: newDate });
         return { ...task, lastCompletedDate: newDate };
     }
   } catch(e) {
@@ -173,14 +165,21 @@ export const toggleTaskCompletion = async (taskId: string) => {
 
 // Async verification
 export const verifyPin = async (pin: string): Promise<User | null> => {
+    // Primero checar caché local para velocidad
     if (cachedUsers.length > 0) {
         return cachedUsers.find(u => u.pin === pin) || null;
     }
-    const q = query(collection(db, USERS_COLLECTION), where("pin", "==", pin));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-        const d = snap.docs[0];
-        return { ...d.data(), id: d.id } as User;
+    
+    // Si no, consultar BD
+    const usersRef = ref(db, USERS_PATH);
+    const pinQuery = query(usersRef, orderByChild('pin'), equalTo(pin));
+    const snapshot = await get(pinQuery);
+    
+    if (snapshot.exists()) {
+        const data = snapshot.val();
+        // data es un objeto { "u1": {User}, "u2": {User} }, tomamos el primero
+        const firstKey = Object.keys(data)[0];
+        return data[firstKey] as User;
     }
     return null;
 };
