@@ -3,13 +3,13 @@ import { getFirestore, Firestore } from "firebase/firestore";
 
 // --- CONFIGURACIÓN DE FIREBASE ---
 const firebaseConfig = {
-  apiKey: "AIzaSyAg3l6qEmcxHB-x37pH9SRNwr5bvWm4RIs",
-  authDomain: "boscon-ab229.firebaseapp.com",
-  databaseURL: "https://boscon-ab229-default-rtdb.firebaseio.com",
-  projectId: "boscon-ab229",
-  storageBucket: "boscon-ab229.firebasestorage.app",
-  messagingSenderId: "751218072036",
-  appId: "1:751218072036:web:a78ca7bdc94e8cebcbcff1"
+  apiKey: "AIzaSyD8AIa1xhJHtufzBvyt67h1tNALbX9An94",
+  authDomain: "boscon-4628d.firebaseapp.com",
+  databaseURL: "https://boscon-4628d-default-rtdb.firebaseio.com",
+  projectId: "boscon-4628d",
+  storageBucket: "boscon-4628d.firebasestorage.app",
+  messagingSenderId: "742777584772",
+  appId: "1:742777584772:web:dd55144e3b0ba7b6a496d1"
 };
 
 let dbInstance: Firestore | null = null;

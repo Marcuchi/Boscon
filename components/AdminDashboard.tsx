@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, Task, UserRole, TaskFrequency } from '../types';
 import { subscribeToUsers, subscribeToTasks, saveTask, deleteTask, addUser, deleteUser, isTaskCompletedForDate, isTaskVisibleOnDate } from '../services/dataService';
-import { generateChecklistForRole } from '../services/geminiService'; // Importamos el servicio IA
-import { PlusIcon, TrashIcon, LogoutIcon, PencilIcon, EllipsisHorizontalIcon, ChevronRightIcon, XMarkIcon, UserIcon, SparklesIcon } from './ui/Icons';
+import { PlusIcon, TrashIcon, LogoutIcon, PencilIcon, EllipsisHorizontalIcon, ChevronRightIcon, XMarkIcon } from './ui/Icons';
 
 interface AdminDashboardProps {
   currentUser: User;
@@ -14,7 +13,7 @@ interface AdminDashboardProps {
 interface ButtonProps { 
     children: React.ReactNode; 
     onClick?: () => void; 
-    variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'magic'; 
+    variant?: 'primary' | 'secondary' | 'danger' | 'ghost'; 
     className?: string; 
     disabled?: boolean; 
     fullWidth?: boolean; 
@@ -28,8 +27,7 @@ const Button: React.FC<ButtonProps> = ({
         primary: "bg-blue-600 text-white shadow-lg shadow-blue-500/30 hover:bg-blue-700 disabled:bg-gray-300 disabled:shadow-none",
         secondary: "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50",
         danger: "bg-red-50 text-red-600 hover:bg-red-100",
-        ghost: "bg-transparent text-gray-500 hover:bg-gray-100",
-        magic: "bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50"
+        ghost: "bg-transparent text-gray-500 hover:bg-gray-100"
     };
 
     return (
@@ -80,7 +78,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [viewDate, setViewDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(getStartOfWeek(new Date()));
-  const [browsingMonth, setBrowsingMonth] = useState<Date>(new Date());
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   
   // Modal States
@@ -95,7 +92,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const [newTaskDescription, setNewTaskDescription] = useState('');
   const [taskFrequency, setTaskFrequency] = useState<TaskFrequency>('DAILY');
   const [selectedDays, setSelectedDays] = useState<number[]>([]); 
-  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
 
   // User Form
   const [newUserName, setNewUserName] = useState('');
@@ -154,36 +150,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
     await saveTask(newTask);
     setShowAddModal(false);
     setEditingTask(null);
-  };
-
-  const handleGenerateAI = async () => {
-      if(!selectedUser) return;
-      setIsGeneratingAI(true);
-      try {
-        // Obtenemos sugerencias
-        const suggestions = await generateChecklistForRole(selectedUser.position || "Empleado General");
-        
-        // Guardamos cada sugerencia automáticamente
-        for(const item of suggestions) {
-            const newTask: Task = {
-                id: Math.random().toString(36).substr(2, 9),
-                title: item.title,
-                description: item.description,
-                assignedToUserId: selectedUser.id,
-                frequency: item.frequency as TaskFrequency,
-                repeatDays: item.frequency === 'DAILY' ? [0,1,2,3,4,5,6] : [], // Por defecto todos los días si es diaria
-                scheduledDate: undefined,
-                lastCompletedDate: null,
-                createdAt: Date.now()
-            };
-            await saveTask(newTask);
-        }
-        alert(`¡Se generaron ${suggestions.length} tareas automáticas!`);
-      } catch (e) {
-          alert("Error generando tareas.");
-      } finally {
-          setIsGeneratingAI(false);
-      }
   };
 
   const handleCreateUser = async () => {
@@ -328,9 +294,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                             <p className="text-gray-500">{selectedUser.position || 'Miembro del equipo'}</p>
                         </div>
                         <div className="flex gap-2">
-                             <Button onClick={handleGenerateAI} disabled={isGeneratingAI} variant="magic">
-                                {isGeneratingAI ? <span className="animate-pulse">Generando...</span> : <><SparklesIcon className="w-4 h-4"/> Generar con IA</>}
-                             </Button>
+                             {/* AI Button Removed */}
                              <Button onClick={() => { setEditingTask(null); setNewTaskTitle(''); setNewTaskDescription(''); setTaskFrequency('DAILY'); setSelectedDays([]); setShowAddModal(true); }}>Nueva Tarea</Button>
                              <button onClick={() => setShowEmployeeMenu(true)} className="p-3 bg-white border border-gray-200 rounded-xl hover:bg-gray-50"><EllipsisHorizontalIcon className="w-5 h-5 text-gray-600" /></button>
                         </div>
@@ -390,9 +354,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
             {/* Mobile Actions */}
             {selectedUser && (
                 <div className="md:hidden absolute bottom-6 right-6 flex flex-col gap-3">
-                    <button onClick={handleGenerateAI} disabled={isGeneratingAI} className="w-14 h-14 bg-purple-600 rounded-full text-white shadow-xl flex items-center justify-center active:scale-90 transition-transform">
-                        {isGeneratingAI ? <span className="animate-spin">✨</span> : <SparklesIcon className="w-7 h-7" />}
-                    </button>
                     <button onClick={() => { setEditingTask(null); setNewTaskTitle(''); setShowAddModal(true); }} className="w-14 h-14 bg-blue-600 rounded-full text-white shadow-xl flex items-center justify-center active:scale-90 transition-transform">
                         <PlusIcon className="w-7 h-7" />
                     </button>
