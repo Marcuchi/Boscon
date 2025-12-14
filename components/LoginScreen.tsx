@@ -1,21 +1,34 @@
-import React, { useState } from 'react';
-import { verifyPin } from '../services/dataService';
+import React, { useState, useEffect } from 'react';
+import { subscribeToUsers } from '../services/dataService';
 import { User } from '../types';
-import { ChevronRightIcon } from './ui/Icons';
 
 interface LoginScreenProps {
   onLogin: (user: User) => void;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
+  const [users, setUsers] = useState<User[]>([]);
   const [password, setPassword] = useState('');
   const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Subscribe to users on mount. This ensures "instant" login validation locally
+  // once the data is loaded, rather than waiting for a network request on submit.
+  useEffect(() => {
+    const unsubscribe = subscribeToUsers((data) => {
+        setUsers(data);
+        setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!password.trim()) return;
 
-    const user = verifyPin(password);
+    // Check against loaded users
+    const user = users.find(u => u.pin === password);
+    
     if (user) {
       onLogin(user);
     } else {
@@ -27,11 +40,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   return (
     <div className="h-screen w-full bg-[#1c1c1e] text-white flex flex-col items-center justify-center py-10 px-6 overflow-hidden relative">
       
-      {/* Background Ambience */}
       <div className="absolute top-[-20%] left-[-20%] w-[140%] h-[50%] bg-blue-900/20 blur-[100px] rounded-full pointer-events-none" />
 
       <div className="flex-1 flex flex-col items-center justify-center w-full max-w-sm z-10">
-          {/* Logo / Avatar */}
           <div className="mb-10 relative group">
               <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
               <div className="w-28 h-28 rounded-3xl overflow-hidden shadow-2xl border border-white/10 relative">
@@ -51,12 +62,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                   <input
                     type="password"
                     value={password}
+                    disabled={loading}
                     onChange={(e) => {
                         setPassword(e.target.value);
                         setError(false);
                     }}
-                    className={`w-full bg-white/10 border ${error ? 'border-red-500/50 text-red-100' : 'border-white/10 focus:border-blue-500/50'} rounded-2xl px-5 py-4 text-center text-lg placeholder-gray-500 outline-none transition-all focus:bg-white/15`}
-                    placeholder="Contraseña"
+                    className={`w-full bg-white/10 border ${error ? 'border-red-500/50 text-red-100' : 'border-white/10 focus:border-blue-500/50'} rounded-2xl px-5 py-4 text-center text-lg placeholder-gray-500 outline-none transition-all focus:bg-white/15 disabled:opacity-50`}
+                    placeholder={loading ? "Cargando..." : "Contraseña"}
                     autoFocus
                   />
                   {error && (
@@ -68,10 +80,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
               <button
                 type="submit"
-                disabled={!password}
-                className={`w-full py-4 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${password ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-900/20' : 'bg-white/5 text-gray-500 cursor-not-allowed'}`}
+                disabled={!password || loading}
+                className={`w-full py-4 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${password && !loading ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-900/20' : 'bg-white/5 text-gray-500 cursor-not-allowed'}`}
               >
-                  Entrar
+                  {loading ? 'Conectando...' : 'Entrar'}
               </button>
           </form>
       </div>
