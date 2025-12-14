@@ -17,7 +17,7 @@ const TASKS_PATH = 'tasks';
 
 // Initial Mock Data for Seeding
 const INITIAL_USERS: User[] = [
-  { id: 'u1', name: 'Administrador', role: UserRole.ADMIN, pin: '2025', avatarUrl: 'https://ui-avatars.com/api/?name=Admin&background=0D8ABC&color=fff', position: 'Gerente' },
+  { id: 'u1', name: 'Administrador', role: UserRole.ADMIN, pin: 'boscon2025', avatarUrl: 'https://ui-avatars.com/api/?name=Admin&background=0D8ABC&color=fff', position: 'Gerente' },
   { id: 'u2', name: 'Juan', role: UserRole.EMPLOYEE, pin: '1111', avatarUrl: 'https://ui-avatars.com/api/?name=Juan&background=random', position: 'Mantenimiento' },
   { id: 'u3', name: 'Maria López', role: UserRole.EMPLOYEE, pin: '2222', avatarUrl: 'https://ui-avatars.com/api/?name=Maria&background=random', position: 'Cocina' },
 ];

@@ -1,4 +1,4 @@
-import * as firebase from "firebase/app";
+import { initializeApp } from "firebase/app";
 import { getDatabase } from "firebase/database";
 
 // --- CONFIGURACIÓN DE FIREBASE (REALTIME DATABASE) ---
@@ -13,7 +13,7 @@ const firebaseConfig = {
 };
 
 // 1. Inicializar la App de Firebase
-const app = firebase.initializeApp(firebaseConfig);
+const app = initializeApp(firebaseConfig);
 
 // 2. Inicializar y exportar la instancia de Realtime Database
 export const db = getDatabase(app);
