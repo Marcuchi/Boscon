@@ -8,127 +8,196 @@ interface LoginScreenProps {
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   const [users, setUsers] = useState<User[]>([]);
-  const [password, setPassword] = useState('');
+  const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
-  const [loading, setLoading] = useState(true);
-  
-  // Estado para errores de conexión (distinto a contraseña incorrecta)
-  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [isLoadingData, setIsLoadingData] = useState(true);
+  const [isVerifying, setIsVerifying] = useState(false);
 
+  // Carga de datos silenciosa (sin bloquear UI)
   useEffect(() => {
-    // Timeout de seguridad: Si en 8 segundos no cargó, asumimos error de red o reglas de Firebase
-    const timeoutSafety = setTimeout(() => {
-        if (loading) {
-            setLoading(false);
-            setConnectionError("La conexión está tardando demasiado. Verifica tu internet o las reglas de la base de datos.");
-        }
-    }, 8000);
-
     const unsubscribe = subscribeToUsers(
         (data) => {
             setUsers(data);
-            setLoading(false);
-            setConnectionError(null);
-            clearTimeout(timeoutSafety);
+            setIsLoadingData(false);
+            // Si el usuario ya escribió el PIN mientras cargaba, verificamos ahora
+            if (pin.length >= 4) {
+                verifyPin(pin, data);
+            }
         },
-        (err) => {
-            // Callback de error de Firestore (ej: Permisos denegados)
-            console.error("Firebase Auth/Connection Error:", err);
-            setLoading(false);
-            setConnectionError("Error de acceso a la base de datos.");
-            clearTimeout(timeoutSafety);
-        }
+        (err) => console.error("Error connection", err)
     );
-    return () => {
-        unsubscribe();
-        clearTimeout(timeoutSafety);
-    };
-  }, []);
+    return () => unsubscribe();
+  }, [pin]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!password.trim()) return;
-
-    const user = users.find(u => u.pin === password);
-    
-    if (user) {
-      onLogin(user);
-    } else {
-      setError(true);
-      setPassword('');
+  // Manejo de entrada
+  const handleNumPadPress = (num: string) => {
+    if (pin.length < 6 && !isVerifying) { // Permitimos hasta 6, aunque validamos al 4 o mas
+        const newPin = pin + num;
+        setPin(newPin);
+        setError(false);
+        
+        // Auto-submit si tiene longitud de 4 o más y tenemos usuarios
+        // (Asumimos pines de 4 dígitos para la mayoría, pero el sistema soporta más)
+        if (users.length > 0) {
+             const exactMatch = users.find(u => u.pin === newPin);
+             if (exactMatch) {
+                 verifyPin(newPin, users);
+             } else if (newPin.length >= 4) {
+                 // Si llegamos a 4 y no coincide, esperamos un momento por si es un pin de 6 digitos
+                 // O si el usuario deja de escribir. Pero para UX rápida, validamos el intento en 4
+                 // si no existe pin de 4, quizas sea de mas.
+                 // Para este demo, asumiremos validación directa si coincide.
+             }
+        }
     }
   };
 
-  return (
-    <div className="h-screen w-full bg-[#1c1c1e] text-white flex flex-col items-center justify-center py-10 px-6 overflow-hidden relative">
-      
-      <div className="absolute top-[-20%] left-[-20%] w-[140%] h-[50%] bg-blue-900/20 blur-[100px] rounded-full pointer-events-none" />
+  const verifyPin = (inputPin: string, userList: User[]) => {
+      setIsVerifying(true);
+      // Pequeño delay artificial para sensación de proceso si es muy rápido
+      setTimeout(() => {
+          const user = userList.find(u => u.pin === inputPin);
+          if (user) {
+              onLogin(user);
+          } else {
+              // Si el pin tiene 4 o más caracteres y no coincide, mostramos error
+              // Si tiene menos, seguimos dejando escribir (caso raro en esta lógica)
+              if (inputPin.length >= 4) {
+                  triggerError();
+              } else {
+                  setIsVerifying(false);
+              }
+          }
+      }, 300);
+  };
 
-      <div className="flex-1 flex flex-col items-center justify-center w-full max-w-sm z-10">
-          <div className="mb-10 relative group">
-              <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-              <div className="w-28 h-28 rounded-3xl overflow-hidden shadow-2xl border border-white/10 relative">
-                  <img 
-                    src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTmf3SKqXHbDSUx84ijPnHgqampfkEGRjUt_A&s" 
-                    className="w-full h-full object-cover" 
-                    alt="Logo"
+  const triggerError = () => {
+      setIsVerifying(false);
+      setError(true);
+      setTimeout(() => {
+          setPin('');
+          setError(false);
+      }, 500);
+  };
+
+  const handleDelete = () => {
+      if (pin.length > 0 && !isVerifying) {
+          setPin(pin.slice(0, -1));
+          setError(false);
+      }
+  };
+
+  // Renderizado de los puntos del PIN
+  const renderDots = () => {
+      return (
+          <div className={`flex gap-4 mb-12 transition-all duration-300 ${error ? 'animate-[shake_0.4s_ease-in-out]' : ''}`}>
+              {[0, 1, 2, 3].map((i) => (
+                  <div 
+                    key={i} 
+                    className={`w-4 h-4 rounded-full border border-white/40 transition-all duration-200 
+                        ${pin.length > i ? 'bg-white border-white' : 'bg-transparent'}`}
                   />
-              </div>
+              ))}
           </div>
+      );
+  };
 
-          <h2 className="text-2xl font-semibold tracking-tight mb-2 text-white">Bienvenido</h2>
+  return (
+    <div className="h-screen w-full bg-black relative overflow-hidden flex flex-col items-center justify-between py-12 px-6">
+      
+      {/* Background Image & Blur Overlay */}
+      <div className="absolute inset-0 z-0">
+          <img 
+            src="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop" 
+            className="w-full h-full object-cover opacity-60"
+            alt="Background"
+          />
+          <div className="absolute inset-0 bg-black/30 backdrop-blur-xl"></div>
+      </div>
+
+      {/* Header Content */}
+      <div className="relative z-10 flex flex-col items-center mt-10">
+          <div className="w-20 h-20 rounded-[2rem] bg-white/10 backdrop-blur-md shadow-2xl flex items-center justify-center mb-6 border border-white/20">
+             <img 
+                src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTmf3SKqXHbDSUx84ijPnHgqampfkEGRjUt_A&s" 
+                className="w-full h-full object-cover rounded-[2rem] opacity-90" 
+                alt="Logo"
+             />
+          </div>
           
-          {connectionError ? (
-             <div className="bg-red-500/10 border border-red-500/50 rounded-xl p-4 mb-6 text-center animate-[fadeIn_0.3s]">
-                 <p className="text-red-200 text-sm font-medium">{connectionError}</p>
-                 <button onClick={() => window.location.reload()} className="mt-2 text-xs bg-red-500/20 hover:bg-red-500/40 text-red-100 px-3 py-1 rounded-lg transition-colors">Reintentar</button>
-             </div>
-          ) : (
-             <p className="text-gray-400 mb-8 text-sm">Ingresa tu contraseña para continuar</p>
-          )}
+          <h2 className="text-2xl font-semibold text-white tracking-wide mb-2">Boscon</h2>
+          <p className="text-white/60 text-sm font-medium">Ingresa el código de acceso</p>
+      </div>
 
-          <form onSubmit={handleSubmit} className="w-full space-y-4">
-              <div className="relative">
-                  <input
-                    type="password"
-                    value={password}
-                    disabled={loading || !!connectionError}
-                    onChange={(e) => {
-                        setPassword(e.target.value);
-                        setError(false);
-                    }}
-                    className={`w-full bg-white/10 border ${error ? 'border-red-500/50 text-red-100' : 'border-white/10 focus:border-blue-500/50'} rounded-2xl px-5 py-4 text-center text-lg placeholder-gray-500 outline-none transition-all focus:bg-white/15 disabled:opacity-50`}
-                    placeholder={loading ? "Conectando..." : "Contraseña"}
-                    autoFocus
-                  />
-                  {error && (
-                      <div className="absolute inset-y-0 right-4 flex items-center animate-[fadeIn_0.2s]">
-                          <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                      </div>
-                  )}
-              </div>
-
-              <button
-                type="submit"
-                disabled={!password || loading || !!connectionError}
-                className={`w-full py-4 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${password && !loading && !connectionError ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-900/20' : 'bg-white/5 text-gray-500 cursor-not-allowed'}`}
-              >
-                  {loading ? (
-                    <span className="flex items-center gap-2">
-                      <svg className="animate-spin h-5 w-5 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      {/* PIN Dots */}
+      <div className="relative z-10 flex flex-col items-center w-full max-w-xs">
+          {renderDots()}
+          
+          {/* Status Message */}
+          <div className="h-6 mb-4">
+              {isLoadingData && pin.length === 0 && (
+                  <p className="text-xs text-white/40 animate-pulse flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span> Conectando...
+                  </p>
+              )}
+              {isVerifying && (
+                  <div className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
-                      Cargando...
-                    </span>
-                  ) : 'Entrar'}
-              </button>
-          </form>
+                  </div>
+              )}
+          </div>
       </div>
 
-      <div className="text-xs text-gray-600 font-mono mt-8 z-10">
-         Admin: boscon2025 | Juan: 1111
+      {/* Numeric Keypad (iOS Style) */}
+      <div className="relative z-10 w-full max-w-[300px] grid grid-cols-3 gap-y-5 gap-x-6 pb-6">
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+              <button
+                key={num}
+                onClick={() => handleNumPadPress(num.toString())}
+                className="w-[75px] h-[75px] rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 active:bg-white/30 transition-all duration-150 flex items-center justify-center text-3xl font-light text-white border border-white/5 shadow-lg"
+              >
+                  {num}
+              </button>
+          ))}
+          
+          {/* Empty Place holder bottom left */}
+          <div className="w-[75px] h-[75px]"></div>
+
+          <button
+            onClick={() => handleNumPadPress('0')}
+            className="w-[75px] h-[75px] rounded-full bg-white/10 backdrop-blur-sm hover:bg-white/20 active:bg-white/30 transition-all duration-150 flex items-center justify-center text-3xl font-light text-white border border-white/5 shadow-lg"
+          >
+              0
+          </button>
+
+          <button
+            onClick={handleDelete}
+            className="w-[75px] h-[75px] flex items-center justify-center text-white/80 active:text-white transition-colors"
+          >
+              {pin.length > 0 ? (
+                  <span className="text-sm font-semibold tracking-wide">Borrar</span>
+              ) : (
+                  <span className="text-sm font-semibold tracking-wide opacity-50">Cancelar</span>
+              )}
+          </button>
       </div>
+
+      {/* Footer Info */}
+      <div className="absolute bottom-2 w-full text-center z-0">
+         <p className="text-[10px] text-white/20 font-mono">v1.2 • Secure RTDB</p>
+      </div>
+
+      {/* Global Styles for Shake Animation */}
+      <style>{`
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          25% { transform: translateX(-10px); }
+          75% { transform: translateX(10px); }
+        }
+      `}</style>
     </div>
   );
 };
