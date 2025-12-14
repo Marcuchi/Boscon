@@ -10,17 +10,28 @@ interface LoginScreenProps {
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!password.trim()) return;
 
-    const user = verifyPin(password);
-    if (user) {
-      onLogin(user);
-    } else {
-      setError(true);
-      setPassword('');
+    setIsLoading(true);
+    setError(false);
+
+    try {
+        const user = await verifyPin(password);
+        if (user) {
+          onLogin(user);
+        } else {
+          setError(true);
+          setPassword('');
+        }
+    } catch (e) {
+        console.error(e);
+        setError(true);
+    } finally {
+        setIsLoading(false);
     }
   };
 
@@ -55,6 +66,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                         setPassword(e.target.value);
                         setError(false);
                     }}
+                    disabled={isLoading}
                     className={`w-full bg-white/10 border ${error ? 'border-red-500/50 text-red-100' : 'border-white/10 focus:border-blue-500/50'} rounded-2xl px-5 py-4 text-center text-lg placeholder-gray-500 outline-none transition-all focus:bg-white/15`}
                     placeholder="Contraseña"
                     autoFocus
@@ -68,10 +80,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
               <button
                 type="submit"
-                disabled={!password}
+                disabled={!password || isLoading}
                 className={`w-full py-4 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${password ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-900/20' : 'bg-white/5 text-gray-500 cursor-not-allowed'}`}
               >
-                  Entrar
+                  {isLoading ? (
+                      <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                  ) : 'Entrar'}
               </button>
           </form>
       </div>

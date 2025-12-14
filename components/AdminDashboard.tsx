@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Task, UserRole, TaskFrequency } from '../types';
-import { getUsers, getTasks, saveTask, deleteTask, addUser, deleteUser, isTaskCompletedForDate, isTaskVisibleOnDate, getMondayOfWeek } from '../services/dataService';
+import { subscribeToUsers, subscribeToTasks, saveTask, deleteTask, addUser, deleteUser, isTaskCompletedForDate, isTaskVisibleOnDate, getMondayOfWeek } from '../services/dataService';
 import { PlusIcon, TrashIcon, LogoutIcon, PencilIcon, EllipsisHorizontalIcon, ChevronRightIcon, XMarkIcon, UserIcon } from './ui/Icons';
 
 interface AdminDashboardProps {
@@ -99,9 +99,9 @@ const getStartOfWeek = (d: Date) => {
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onLogout }) => {
   // State
-  const [users, setUsers] = useState<User[]>(getUsers().filter(u => u.role !== UserRole.ADMIN));
-  const [tasks, setTasks] = useState<Task[]>(getTasks());
-  const [selectedUser, setSelectedUser] = useState<User | null>(users[0] || null);
+  const [users, setUsers] = useState<User[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
   
   // Date State
   const [viewDate, setViewDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -129,11 +129,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const [newUserAvatar, setNewUserAvatar] = useState('');
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const WEEKDAYS_HEADER = ['L', 'M', 'M', 'J', 'V', 'S', 'D']; // Updated for Monday Start
+  const WEEKDAYS_HEADER = ['L', 'M', 'M', 'J', 'V', 'S', 'D']; 
 
   // --- LOGIC ---
+  
+  // Subscriptions to Firebase
+  useEffect(() => {
+    const unsubUsers = subscribeToUsers((data) => {
+        const employees = data.filter(u => u.role !== UserRole.ADMIN);
+        setUsers(employees);
+        // If selected user was deleted or not set, set to first
+        if (!selectedUser && employees.length > 0) {
+            setSelectedUser(employees[0]);
+        }
+    });
 
-  const refreshTasks = () => setTasks(getTasks());
+    const unsubTasks = subscribeToTasks((data) => {
+        setTasks(data);
+    });
+
+    return () => {
+        unsubUsers();
+        unsubTasks();
+    };
+  }, []); // Run once on mount
+
+  // Update selectedUser reference if it changes in the users list update
+  useEffect(() => {
+     if(selectedUser) {
+         const found = users.find(u => u.id === selectedUser.id);
+         if(found) setSelectedUser(found);
+         else if(users.length > 0) setSelectedUser(users[0]);
+         else setSelectedUser(null);
+     } else if (users.length > 0) {
+         setSelectedUser(users[0]);
+     }
+  }, [users]);
   
   // Filter Logic
   const userTasks = tasks.filter(t => {
@@ -154,7 +185,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const weeklyTasks = sortTasks(userTasks.filter(t => t.frequency === 'WEEKLY'));
 
   // Handlers
-  const handleSaveTask = () => {
+  const handleSaveTask = async () => {
     if (!newTaskTitle.trim() || !selectedUser) return;
     
     // Map UI Index to JS Day Index (0-6 Sun)
@@ -171,13 +202,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
         repeatDays: finalRepeatDays,
         scheduledDate: (taskFrequency === 'DAILY' && finalRepeatDays.length === 0) ? viewDate : undefined,
         lastCompletedDate: editingTask ? editingTask.lastCompletedDate : null,
-        // Important: Use Date.now() for creation. 
-        // Logic in dataService ensures 'WEEKLY' tasks are only visible in the week of this timestamp.
         createdAt: editingTask ? editingTask.createdAt : Date.now()
     };
 
-    saveTask(newTask);
-    refreshTasks();
+    await saveTask(newTask); // Async
     setShowAddModal(false);
     setEditingTask(null);
   };
@@ -193,7 +221,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
       }
   };
 
-  const handleCreateUser = () => {
+  const handleCreateUser = async () => {
       if (!newUserName.trim() || !newUserPin.trim()) return;
       const avatar = newUserAvatar.trim() || `https://ui-avatars.com/api/?name=${encodeURIComponent(newUserName)}&background=random`;
       
@@ -205,18 +233,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
           avatarUrl: avatar,
           position: newUserPosition || 'Empleado'
       };
-      addUser(newUser);
-      setUsers(getUsers().filter(u => u.role !== UserRole.ADMIN));
+      await addUser(newUser); // Async
+      // No need to setUsers manually, subscription handles it
       setSelectedUser(newUser);
       setShowUserModal(false);
   };
 
-  const handleDeleteUser = () => {
+  const handleDeleteUser = async () => {
       if (selectedUser) {
-          deleteUser(selectedUser.id);
-          const remainingUsers = getUsers().filter(u => u.role !== UserRole.ADMIN);
-          setUsers(remainingUsers);
-          setSelectedUser(remainingUsers[0] || null);
+          await deleteUser(selectedUser.id);
           setShowEmployeeMenu(false);
       }
   };
@@ -340,7 +365,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                         <PencilIcon className="w-4 h-4" />
                      </button>
                      <button 
-                        onClick={(e) => { e.stopPropagation(); if(confirm('¿Eliminar esta tarea permanentemente?')) { deleteTask(task.id); refreshTasks(); } }} 
+                        onClick={async (e) => { 
+                            e.stopPropagation(); 
+                            if(confirm('¿Eliminar esta tarea permanentemente?')) { 
+                                await deleteTask(task.id); 
+                            } 
+                        }} 
                         className="p-2 text-red-400 hover:bg-red-50 rounded-xl transition-colors"
                         title="Eliminar"
                      >

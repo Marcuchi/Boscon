@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { User, Task } from '../types';
-import { getTasks, toggleTaskCompletion, isTaskCompletedForDate, isTaskVisibleOnDate } from '../services/dataService';
+import { subscribeToTasks, toggleTaskCompletion, isTaskCompletedForDate, isTaskVisibleOnDate } from '../services/dataService';
 import { CheckIcon, LogoutIcon } from './ui/Icons';
 import { NotificationToast } from './ui/Notification';
 
@@ -10,61 +10,43 @@ interface EmployeeDashboardProps {
 }
 
 export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser, onLogout }) => {
-  const [tasks, setTasks] = useState<Task[]>(getTasks());
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const todayStr = new Date().toISOString().split('T')[0];
 
   // Notification State
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
-  
-  // Ref to track the "Last Checked Time". We initialize it to Now.
-  // Any task with createdAt > this timestamp is considered "New" since login/last refresh.
-  const lastCheckTimestampRef = useRef<number>(Date.now());
+  const previousTasksRef = useRef<Task[]>([]);
+  const isFirstLoad = useRef(true);
 
-  const refreshTasks = () => setTasks(getTasks());
-
-  // Polling Effect for Notifications
+  // Subscribe to real-time updates
   useEffect(() => {
-    // Check every 5 seconds for new tasks
-    const intervalId = setInterval(() => {
-        const currentStoredTasks = getTasks();
+    const unsubscribe = subscribeToTasks((currentTasks) => {
+        setTasks(currentTasks);
         
-        // Find tasks that are:
-        // 1. Assigned to me
-        // 2. Created AFTER my last check
-        const newIncomingTasks = currentStoredTasks.filter(t => 
-            t.assignedToUserId === currentUser.id && 
-            t.createdAt > lastCheckTimestampRef.current
-        );
+        // Handle Notifications Logic
+        if (!isFirstLoad.current) {
+            // Check if there are NEW tasks assigned to this user that weren't there before
+            const previousMyTasks = previousTasksRef.current.filter(t => t.assignedToUserId === currentUser.id);
+            const currentMyTasks = currentTasks.filter(t => t.assignedToUserId === currentUser.id);
+            
+            // Simple check: IDs present in current but not in previous
+            const newTasks = currentMyTasks.filter(ct => !previousMyTasks.some(pt => pt.id === ct.id));
 
-        if (newIncomingTasks.length > 0) {
-            // Found new tasks!
-            const count = newIncomingTasks.length;
-            const message = count === 1 
-                ? `Nueva tarea asignada: "${newIncomingTasks[0].title}"`
-                : `Tienes ${count} tareas nuevas asignadas.`;
-            
-            setNotificationMsg(message);
-            
-            // Update the view
-            setTasks(currentStoredTasks);
-            
-            // Update the timestamp so we don't notify about these again
-            lastCheckTimestampRef.current = Date.now();
-        } else {
-            // Even if no notification, silent update to keep sync if tasks were deleted or modified without changing count
-            // Optimization: Only update state if JSON string differs to avoid render loops, 
-            // but for this simple app, we can just check length or basic properties.
-            // For now, let's only hard refresh if we detect a change in total count or rely on manual refresh for non-creation edits.
-            // However, to be robust, let's just sync the list if the length changed or simple hash.
-            // To keep it simple and performant: We only auto-refresh on NEW tasks for notification purposes.
-            // If you want auto-sync for deletions, we'd need more complex diffing. 
-            // Let's stick to the request: "Notification of new tasks".
+            if (newTasks.length > 0) {
+                 const count = newTasks.length;
+                 const message = count === 1 
+                    ? `Nueva tarea asignada: "${newTasks[0].title}"`
+                    : `Tienes ${count} tareas nuevas asignadas.`;
+                 setNotificationMsg(message);
+            }
         }
+        
+        previousTasksRef.current = currentTasks;
+        isFirstLoad.current = false;
+    });
 
-    }, 5000);
-
-    return () => clearInterval(intervalId);
+    return () => unsubscribe();
   }, [currentUser.id]);
 
   const myTasks = useMemo(() => {
@@ -100,7 +82,7 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
                 className={`p-4 flex items-center gap-4 cursor-pointer transition-colors ${isCompleted ? 'bg-gray-50' : 'bg-white'}`}
               >
                   <button 
-                     onClick={(e) => { e.stopPropagation(); toggleTaskCompletion(task.id); refreshTasks(); }}
+                     onClick={async (e) => { e.stopPropagation(); await toggleTaskCompletion(task.id); }}
                      className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center border-2 transition-all ${isCompleted ? 'bg-green-500 border-green-500 scale-110' : 'border-gray-300 hover:border-blue-400'}`}
                   >
                       {isCompleted && <CheckIcon className="w-4 h-4 text-white" />}
