@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, Suspense, lazy } from 'react';
 import { LoginScreen } from './components/LoginScreen';
-import { AdminDashboard } from './components/AdminDashboard';
-import { EmployeeDashboard } from './components/EmployeeDashboard';
 import { initializeData } from './services/dataService';
 import { User, UserRole } from './types';
+
+// Lazy load dashboards to reduce initial bundle size significantly.
+// This splits the code into separate chunks that only load when needed.
+const AdminDashboard = lazy(() => import('./components/AdminDashboard').then(module => ({ default: module.AdminDashboard })));
+const EmployeeDashboard = lazy(() => import('./components/EmployeeDashboard').then(module => ({ default: module.EmployeeDashboard })));
 
 // Initialize mock data on load
 try {
@@ -50,6 +53,13 @@ class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasErr
   }
 }
 
+const LoadingSpinner = () => (
+    <div className="flex flex-col items-center justify-center min-h-screen w-full bg-[#F2F2F7]">
+        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+        <p className="text-xs text-gray-400 font-medium">Cargando módulo...</p>
+    </div>
+);
+
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
 
@@ -65,11 +75,13 @@ const App: React.FC = () => {
     <LoginScreen onLogin={handleLogin} />
   ) : (
     <div className="min-h-screen bg-[#F2F2F7] text-gray-900 font-sans selection:bg-blue-500 selection:text-white">
-        {user.role === UserRole.ADMIN ? (
-          <AdminDashboard currentUser={user} onLogout={handleLogout} />
-        ) : (
-          <EmployeeDashboard currentUser={user} onLogout={handleLogout} />
-        )}
+        <Suspense fallback={<LoadingSpinner />}>
+            {user.role === UserRole.ADMIN ? (
+              <AdminDashboard currentUser={user} onLogout={handleLogout} />
+            ) : (
+              <EmployeeDashboard currentUser={user} onLogout={handleLogout} />
+            )}
+        </Suspense>
     </div>
   );
 
