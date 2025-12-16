@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { User, Task } from '../types';
-import { subscribeToTasks, toggleTaskCompletion, isTaskCompletedForDate, isTaskVisibleOnDate, subscribeToSettings } from '../services/dataService';
-import { CheckIcon, LogoutIcon } from './ui/Icons';
+import { subscribeToTasks, toggleTaskCompletion, isTaskCompletedForDate, isTaskVisibleOnDate, subscribeToSettings, subscribeToAppNotifications, sendAppNotification } from '../services/dataService';
+import { CheckIcon, LogoutIcon, BellIcon } from './ui/Icons'; // Added BellIcon usage
 import { NotificationToast } from './ui/Notification';
 
 interface EmployeeDashboardProps {
@@ -18,14 +18,57 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
   const [notificationType, setNotificationType] = useState<'info' | 'success'>('info');
   const [scheduledTimes, setScheduledTimes] = useState<string[]>([]);
   
+  // Estado para controlar permisos de notificación
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
+    typeof Notification !== 'undefined' ? Notification.permission : 'default'
+  );
+  
   // Refs to track logic for notifications
   const lastCheckTimestampRef = useRef<number>(Date.now());
   const initialLoadRef = useRef(true);
+  const dashboardLoadTimeRef = useRef<number>(Date.now());
   
   // Ref to prevent multiple alerts for the same TIME in the same day.
-  // Stores the last specific time string notified today, e.g., "14:00"
   const lastNotifiedTimeRef = useRef<string | null>(null);
   const lastNotifiedDateRef = useRef<string | null>(null);
+
+  // --- SOLICITAR PERMISOS DE SISTEMA ---
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+        alert("Este navegador no soporta notificaciones de escritorio.");
+        return;
+    }
+    
+    try {
+        const permission = await Notification.requestPermission();
+        setNotifPermission(permission);
+        if (permission === 'granted') {
+            sendSystemNotification("Notificaciones Activas", "Ahora recibirás recordatorios en tu dispositivo.");
+        }
+    } catch (e) {
+        console.error("Error pidiendo permiso", e);
+    }
+  };
+
+  // --- ENVIAR NOTIFICACIÓN AL SISTEMA ---
+  const sendSystemNotification = (title: string, body: string) => {
+      // 1. Siempre mostrar toast interno como fallback
+      setNotificationMsg(body);
+      setNotificationType('info');
+
+      // 2. Intentar enviar al centro de notificaciones
+      if (Notification.permission === 'granted' && navigator.serviceWorker) {
+          navigator.serviceWorker.ready.then((registration) => {
+              registration.showNotification(title, {
+                  body: body,
+                  icon: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTmf3SKqXHbDSUx84ijPnHgqampfkEGRjUt_A&s',
+                  badge: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTmf3SKqXHbDSUx84ijPnHgqampfkEGRjUt_A&s',
+                  vibrate: [200, 100, 200],
+                  tag: 'boscon-reminder' // Evita spam, reemplaza la anterior si existe
+              } as any);
+          });
+      }
+  };
 
   useEffect(() => {
     const unsubscribeTasks = subscribeToTasks((currentStoredTasks) => {
@@ -44,8 +87,8 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
                 const message = count === 1 
                     ? `Nueva tarea asignada: "${newIncomingTasks[0].title}"`
                     : `Tienes ${count} tareas nuevas asignadas.`;
-                setNotificationMsg(message);
-                setNotificationType('info');
+                
+                sendSystemNotification("Nueva Tarea", message);
                 lastCheckTimestampRef.current = Date.now();
                 
                 // Haptic feedback
@@ -65,9 +108,25 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
         }
     });
 
+    // Suscripción a Broadcasts del Admin
+    const unsubscribeNotifs = subscribeToAppNotifications((notifications) => {
+        const broadcasts = notifications.filter(n => 
+            n.type === 'BROADCAST' && 
+            n.timestamp > dashboardLoadTimeRef.current
+        );
+
+        if (broadcasts.length > 0) {
+            dashboardLoadTimeRef.current = Date.now();
+            const latest = broadcasts[0];
+            sendSystemNotification("Mensaje de Admin", latest.message);
+            if(navigator.vibrate) navigator.vibrate([200, 100, 200]);
+        }
+    });
+
     return () => {
         unsubscribeTasks();
         unsubscribeSettings();
+        unsubscribeNotifs();
     };
   }, [currentUser.id]);
 
@@ -91,39 +150,6 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
               lastNotifiedTimeRef.current = null;
           }
 
-          // Check each scheduled time
-          for (const timeStr of scheduledTimes) {
-              const [schedHour, schedMin] = timeStr.split(':').map(Number);
-              
-              // We check if "now" is the minute of the schedule or just passed it within the last minute
-              // To be safe against interval delays, we check:
-              // 1. Is it currently past the time?
-              // 2. Have we NOT notified for this specific time today?
-              // 3. Is it within a reasonable window (e.g. < 59 mins past) so we don't spam on page reload if user loads at 5PM and had a 9AM alarm?
-              //    ACTUALLY, standard behavior is: if I login and I missed a notification, show it. But only ONCE per login session for that time slot.
-              //    Let's stick to "Just passed or is current minute".
-              
-              const isPast = (currentHour > schedHour) || (currentHour === schedHour && currentMin >= schedMin);
-              
-              if (isPast) {
-                  // Ensure we haven't already done this specific time slot
-                  if (lastNotifiedTimeRef.current !== timeStr) {
-                      
-                      // Check pending tasks
-                      const pendingCount = myTasks.filter(t => !isTaskCompletedForDate(t, todayStr)).length;
-                      
-                      if (pendingCount > 0) {
-                          // Only trigger if it's reasonably close (within 30 mins) OR we want persistent reminders?
-                          // Let's do persistent: If time passed and not notified yet, do it.
-                          // But we need to make sure we don't re-trigger lower times if we just hit a later one.
-                          // Simple logic: Trigger the *latest* applicable time that hasn't been triggered.
-                          // Due to loop order, we might trigger multiple if we load late.
-                          // Better: Find the latest passed time.
-                      }
-                  }
-              }
-          }
-
           // Optimized Approach: Find the most recent passed schedule time
           let latestPassedTime: string | null = null;
           
@@ -132,16 +158,19 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
 
           for (const timeStr of sortedTimes) {
              const [h, m] = timeStr.split(':').map(Number);
+             // Trigger if hour is greater, OR same hour and minute is same or greater
              if ((currentHour > h) || (currentHour === h && currentMin >= m)) {
                  latestPassedTime = timeStr;
              }
           }
 
+          // Trigger logic
           if (latestPassedTime && latestPassedTime !== lastNotifiedTimeRef.current) {
               const pendingCount = myTasks.filter(t => !isTaskCompletedForDate(t, todayStr)).length;
               if (pendingCount > 0) {
-                  setNotificationMsg(`Recordatorio (${latestPassedTime}): Tienes ${pendingCount} tareas pendientes.`);
-                  setNotificationType('info');
+                  const message = `Tienes ${pendingCount} tareas pendientes. ¡No olvides completarlas!`;
+                  sendSystemNotification(`Recordatorio ${latestPassedTime}`, message);
+                  
                   if(navigator.vibrate) navigator.vibrate([100, 50, 100]);
                   
                   // Mark as handled so we don't repeat until next scheduled time passed
@@ -192,6 +221,13 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
               // Task finished
               setNotificationMsg("¡Buen trabajo! Tarea completada.");
               setNotificationType('success');
+              
+              // Notify Admin
+              await sendAppNotification({
+                  type: 'TASK_COMPLETED',
+                  message: `${currentUser.name} completó: "${task.title}"`,
+                  fromUserName: currentUser.name
+              });
           }
       };
       
@@ -240,6 +276,17 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
                     </div>
                     <button onClick={onLogout} className="md:hidden p-2 bg-gray-100 rounded-full"><LogoutIcon className="w-5 h-5 text-gray-600" /></button>
                 </div>
+                
+                {/* Botón de permiso para iOS/Android */}
+                {notifPermission === 'default' && (
+                    <button 
+                        onClick={requestNotificationPermission}
+                        className="w-full mb-6 py-3 bg-blue-50 text-blue-600 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 border border-blue-100 hover:bg-blue-100 transition-colors animate-pulse"
+                    >
+                        <BellIcon className="w-5 h-5" />
+                        Activar Notificaciones
+                    </button>
+                )}
 
                 <div className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-3xl p-6 text-white shadow-xl shadow-blue-900/20 mb-6 md:mb-auto">
                     <div className="flex justify-between items-end mb-4">

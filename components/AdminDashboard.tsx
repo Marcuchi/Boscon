@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { User, Task, UserRole, TaskFrequency } from '../types';
-import { subscribeToUsers, subscribeToTasks, saveTask, deleteTask, addUser, deleteUser, isTaskCompletedForDate, isTaskVisibleOnDate, getMondayOfWeek, subscribeToSettings, updateSettings } from '../services/dataService';
-import { PlusIcon, TrashIcon, LogoutIcon, PencilIcon, EllipsisHorizontalIcon, ChevronRightIcon, XMarkIcon, UserIcon, CogIcon } from './ui/Icons';
+import { User, Task, UserRole, TaskFrequency, AppNotification } from '../types';
+import { subscribeToUsers, subscribeToTasks, saveTask, deleteTask, addUser, deleteUser, isTaskCompletedForDate, isTaskVisibleOnDate, getMondayOfWeek, subscribeToSettings, updateSettings, sendAppNotification, subscribeToAppNotifications } from '../services/dataService';
+import { PlusIcon, TrashIcon, LogoutIcon, PencilIcon, EllipsisHorizontalIcon, ChevronRightIcon, XMarkIcon, UserIcon, CogIcon, BellIcon } from './ui/Icons';
+import { NotificationToast } from './ui/Notification';
 
 interface AdminDashboardProps {
   currentUser: User;
@@ -75,6 +76,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const [showEmployeeMenu, setShowEmployeeMenu] = useState(false);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showBroadcastModal, setShowBroadcastModal] = useState(false);
   
   // Forms
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -82,6 +84,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const [newTaskDescription, setNewTaskDescription] = useState('');
   const [taskFrequency, setTaskFrequency] = useState<TaskFrequency>('DAILY');
   const [selectedDays, setSelectedDays] = useState<number[]>([]); 
+  const [broadcastMessage, setBroadcastMessage] = useState('');
 
   // User Form (Create/Edit)
   const [isEditingUser, setIsEditingUser] = useState(false);
@@ -94,18 +97,52 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const [notifSchedule, setNotifSchedule] = useState<string[]>([]);
   const [tempTime, setTempTime] = useState('');
 
+  // Notificaciones locales (Toast)
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
+    typeof Notification !== 'undefined' ? Notification.permission : 'default'
+  );
+
+  // Ref para evitar mostrar notificaciones viejas al cargar
+  const dashboardLoadTimeRef = useRef<number>(Date.now());
+
   const WEEKDAYS_HEADER = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
+
+  // --- LOGIC FOR SYSTEM NOTIFICATIONS ---
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) return;
+    try {
+        const permission = await Notification.requestPermission();
+        setNotifPermission(permission);
+        if (permission === 'granted') {
+             new Notification("Boscon Admin", { body: "Notificaciones activadas." });
+        }
+    } catch (e) { console.error(e); }
+  };
+
+  const sendSystemNotification = (title: string, body: string) => {
+    // 1. Toast
+    setToastMsg(`${title}: ${body}`);
+    // 2. System
+    if (Notification.permission === 'granted' && navigator.serviceWorker) {
+        navigator.serviceWorker.ready.then((registration) => {
+            registration.showNotification(title, {
+                body: body,
+                icon: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTmf3SKqXHbDSUx84ijPnHgqampfkEGRjUt_A&s',
+                tag: 'admin-alert'
+            });
+        });
+    }
+  };
 
   // --- FIRESTORE SUBSCRIPTIONS ---
   useEffect(() => {
     const unsubUsers = subscribeToUsers((data) => {
         const employees = data.filter(u => u.role !== UserRole.ADMIN);
         setUsers(employees);
-        // If selected user was deleted or first load
         if (!selectedUser && employees.length > 0) {
             setSelectedUser(employees[0]);
         } else if (selectedUser) {
-            // Update selected user info in case it changed (retaining selection)
             const updated = employees.find(u => u.id === selectedUser.id);
             if (updated) setSelectedUser(updated);
             else if (employees.length > 0) setSelectedUser(employees[0]);
@@ -123,10 +160,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
         }
     });
 
+    // Escuchar notificaciones de tareas completadas
+    const unsubNotifs = subscribeToAppNotifications((notifications) => {
+        // Filtrar solo las que ocurrieron DESPUES de que cargó el dashboard
+        const newNotifs = notifications.filter(n => 
+            n.type === 'TASK_COMPLETED' && 
+            n.timestamp > dashboardLoadTimeRef.current
+        );
+
+        if (newNotifs.length > 0) {
+            // Actualizar timestamp para no repetir
+            dashboardLoadTimeRef.current = Date.now();
+            // Mostrar la mas reciente
+            const latest = newNotifs[0];
+            sendSystemNotification("Tarea Completada", latest.message);
+            // Sonido
+            if(navigator.vibrate) navigator.vibrate(100);
+        }
+    });
+
     return () => {
         unsubUsers();
         unsubTasks();
         unsubSettings();
+        unsubNotifs();
     };
   }, []); // Run once on mount
 
@@ -253,6 +310,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
       setShowSettingsModal(false);
   };
 
+  const handleSendBroadcast = async () => {
+      if (!broadcastMessage.trim()) return;
+      await sendAppNotification({
+          type: 'BROADCAST',
+          message: broadcastMessage,
+          fromUserName: currentUser.name
+      });
+      setBroadcastMessage('');
+      setShowBroadcastModal(false);
+      setToastMsg("Notificación enviada a todos.");
+  };
+
   const openEditModal = (task: Task) => {
       setEditingTask(task);
       setNewTaskTitle(task.title);
@@ -350,9 +419,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[#F2F2F7]">
+        <NotificationToast message={toastMsg || ''} visible={!!toastMsg} onClose={() => setToastMsg(null)} />
+
         {/* --- SIDEBAR (Desktop) --- */}
         <aside className="hidden md:flex flex-col w-72 bg-white border-r border-gray-200 h-full flex-shrink-0">
             <div className="p-6 border-b border-gray-100"><h1 className="text-xl font-bold tracking-tight text-gray-900">Boscon <span className="text-blue-600">.Admin</span></h1></div>
+            
+            {/* Activar Notificaciones */}
+            {notifPermission === 'default' && (
+                <div className="px-4 pt-4">
+                    <button onClick={requestNotificationPermission} className="w-full py-2 bg-blue-50 text-blue-600 rounded-xl text-xs font-bold border border-blue-100 flex items-center justify-center gap-2 hover:bg-blue-100"><BellIcon className="w-4 h-4"/> Activar Alertas</button>
+                </div>
+            )}
+
             <div className="flex-1 overflow-y-auto p-4 space-y-1">
                 <p className="px-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Equipo</p>
                 {users.map(u => (
@@ -368,6 +447,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                 </button>
             </div>
             <div className="p-4 border-t border-gray-200 flex flex-col gap-2">
+                <button onClick={() => setShowBroadcastModal(true)} className="w-full flex items-center gap-2 p-2 text-sm text-gray-500 hover:text-blue-600 transition-colors"><BellIcon className="w-5 h-5" /> Notificar Equipo</button>
                 <button onClick={() => setShowSettingsModal(true)} className="w-full flex items-center gap-2 p-2 text-sm text-gray-500 hover:text-gray-800 transition-colors"><CogIcon className="w-5 h-5" /> Configuración</button>
                 <button onClick={onLogout} className="w-full flex items-center gap-2 p-2 text-sm text-gray-500 hover:text-red-600 transition-colors"><LogoutIcon className="w-5 h-5" /> Cerrar Sesión</button>
             </div>
@@ -379,11 +459,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                 <div className="flex justify-between items-center px-4 py-3">
                     <h1 className="font-bold text-lg">Admin</h1>
                     <div className="flex items-center gap-3">
+                        <button onClick={() => setShowBroadcastModal(true)}><BellIcon className="w-5 h-5 text-gray-600" /></button>
                         <button onClick={() => setShowSettingsModal(true)}><CogIcon className="w-5 h-5 text-gray-600" /></button>
                         <button onClick={onLogout}><LogoutIcon className="w-5 h-5 text-gray-600" /></button>
                     </div>
                 </div>
-                <div className="flex gap-4 overflow-x-auto px-4 pb-3 no-scrollbar">
+                {notifPermission === 'default' && (
+                    <div onClick={requestNotificationPermission} className="bg-blue-600 text-white text-xs font-bold py-2 px-4 text-center cursor-pointer">
+                        Toca aquí para recibir alertas cuando terminen tareas.
+                    </div>
+                )}
+                <div className="flex gap-4 overflow-x-auto px-4 pb-3 mt-2 no-scrollbar">
                     {users.map(u => (
                         <div key={u.id} onClick={() => setSelectedUser(u)} className="flex flex-col items-center gap-1 flex-shrink-0 cursor-pointer">
                             <div className={`w-14 h-14 rounded-full p-0.5 ${selectedUser?.id === u.id ? 'bg-gradient-to-tr from-blue-500 to-cyan-400' : 'bg-transparent'}`}><img src={u.avatarUrl} className="w-full h-full rounded-full border-2 border-white object-cover" /></div>
@@ -554,6 +640,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                 </div>
 
                 <Button fullWidth onClick={handleSaveSettings}>Guardar Configuración</Button>
+            </div>
+        </ResponsiveModal>
+
+        {/* BROADCAST MODAL */}
+        <ResponsiveModal isOpen={showBroadcastModal} onClose={() => setShowBroadcastModal(false)} title="Enviar Mensaje a Todos">
+            <div className="space-y-5">
+                <div className="bg-amber-50 border border-amber-100 p-4 rounded-xl">
+                    <p className="text-xs text-amber-800 leading-relaxed font-medium">Este mensaje se enviará instantáneamente a todos los empleados activos y aparecerá como una notificación en sus dispositivos.</p>
+                </div>
+                <div>
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Mensaje</label>
+                    <textarea 
+                        value={broadcastMessage} 
+                        onChange={e => setBroadcastMessage(e.target.value)} 
+                        className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all h-32 resize-none" 
+                        placeholder="Ej. Reunión general en 10 minutos..." 
+                    />
+                </div>
+                <Button fullWidth onClick={handleSendBroadcast} disabled={!broadcastMessage.trim()}>Enviar Notificación</Button>
             </div>
         </ResponsiveModal>
     </div>

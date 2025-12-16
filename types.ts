@@ -34,3 +34,13 @@ export interface AuthState {
   isAuthenticated: boolean;
   currentUser: User | null;
 }
+
+export type NotificationType = 'BROADCAST' | 'TASK_COMPLETED';
+
+export interface AppNotification {
+    id: string;
+    type: NotificationType;
+    message: string;
+    timestamp: number;
+    fromUserName?: string;
+}

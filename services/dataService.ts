@@ -1,4 +1,4 @@
-import { User, Task, UserRole } from '../types';
+import { User, Task, UserRole, AppNotification } from '../types';
 import { db } from './firebase'; 
 import { 
   ref, 
@@ -9,12 +9,14 @@ import {
   update, 
   query, 
   orderByChild, 
-  equalTo 
+  equalTo,
+  limitToLast
 } from "firebase/database";
 
 const USERS_PATH = 'users';
 const TASKS_PATH = 'tasks';
 const SETTINGS_PATH = 'settings';
+const NOTIFICATIONS_PATH = 'notifications';
 
 // Initial Mock Data for Seeding
 const INITIAL_USERS: User[] = [
@@ -123,7 +125,38 @@ export const subscribeToSettings = (callback: (settings: any) => void) => {
     });
 };
 
+// Suscripción a notificaciones (limitada a las ultimas 5 para eficiencia)
+export const subscribeToAppNotifications = (callback: (notifications: AppNotification[]) => void) => {
+    const notifRef = query(ref(db, NOTIFICATIONS_PATH), limitToLast(5));
+    return onValue(notifRef, (snapshot) => {
+        const data = snapshot.val();
+        const notifications: AppNotification[] = data ? Object.values(data) : [];
+        // Ordenar por timestamp
+        notifications.sort((a,b) => b.timestamp - a.timestamp);
+        callback(notifications);
+    });
+};
+
 // --- CRUD OPERATIONS ---
+
+// Enviar notificación (Broadcast o Task Completed)
+export const sendAppNotification = async (notification: Omit<AppNotification, 'id' | 'timestamp'>) => {
+    try {
+        const id = Math.random().toString(36).substr(2, 9);
+        const newNotif: AppNotification = {
+            ...notification,
+            id,
+            timestamp: Date.now()
+        };
+        // Guardar en /notifications/{id}
+        await set(ref(db, `${NOTIFICATIONS_PATH}/${id}`), newNotif);
+        
+        // Limpieza básica: Si hay muchas notificaciones, podríamos borrar las viejas aquí, 
+        // pero para este alcance lo dejaremos crecer o se puede implementar una Cloud Function.
+    } catch (e) {
+        console.error("Error sending notification", e);
+    }
+};
 
 export const updateSettings = async (settings: any) => {
     try {
