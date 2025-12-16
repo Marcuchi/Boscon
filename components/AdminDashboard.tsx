@@ -3,6 +3,9 @@ import { User, Task, UserRole, TaskFrequency, AppNotification } from '../types';
 import { subscribeToUsers, subscribeToTasks, saveTask, deleteTask, addUser, deleteUser, isTaskCompletedForDate, isTaskVisibleOnDate, getMondayOfWeek, subscribeToSettings, updateSettings, sendAppNotification, subscribeToAppNotifications } from '../services/dataService';
 import { PlusIcon, TrashIcon, LogoutIcon, PencilIcon, EllipsisHorizontalIcon, ChevronRightIcon, XMarkIcon, UserIcon, CogIcon, BellIcon } from './ui/Icons';
 import { NotificationToast } from './ui/Notification';
+// Importamos Capacitor Core y Plugin
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { Capacitor } from '@capacitor/core';
 
 interface AdminDashboardProps {
   currentUser: User;
@@ -99,40 +102,57 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
 
   // Notificaciones locales (Toast)
   const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
-    typeof Notification !== 'undefined' ? Notification.permission : 'default'
-  );
+  const [notifEnabled, setNotifEnabled] = useState(false);
 
   // Ref para evitar mostrar notificaciones viejas al cargar
   const dashboardLoadTimeRef = useRef<number>(Date.now());
 
   const WEEKDAYS_HEADER = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
+  // Verificar estado inicial de permisos
+  useEffect(() => {
+    const checkPerms = async () => {
+        if (Capacitor.isNativePlatform()) {
+            const perm = await LocalNotifications.checkPermissions();
+            setNotifEnabled(perm.display === 'granted');
+        } else if ('Notification' in window) {
+            setNotifEnabled(Notification.permission === 'granted');
+        }
+    };
+    checkPerms();
+  }, []);
+
   // --- LOGIC FOR SYSTEM NOTIFICATIONS ---
   const requestNotificationPermission = async () => {
-    if (!('Notification' in window)) return;
     try {
-        const permission = await Notification.requestPermission();
-        setNotifPermission(permission);
-        if (permission === 'granted') {
-             new Notification("Boscon Admin", { body: "Notificaciones activadas." });
+        if (Capacitor.isNativePlatform()) {
+             const result = await LocalNotifications.requestPermissions();
+             if (result.display === 'granted') setNotifEnabled(true);
+        } else if ('Notification' in window) {
+             const result = await Notification.requestPermission();
+             if (result === 'granted') setNotifEnabled(true);
         }
     } catch (e) { console.error(e); }
   };
 
-  const sendSystemNotification = (title: string, body: string) => {
+  const sendSystemNotification = async (title: string, body: string) => {
     // 1. Toast
     setToastMsg(`${title}: ${body}`);
     // 2. System
-    if (Notification.permission === 'granted' && navigator.serviceWorker) {
-        navigator.serviceWorker.ready.then((registration) => {
-            registration.showNotification(title, {
-                body: body,
-                icon: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTmf3SKqXHbDSUx84ijPnHgqampfkEGRjUt_A&s',
-                tag: 'admin-alert'
+    try {
+        if (Capacitor.isNativePlatform()) {
+            await LocalNotifications.schedule({
+                notifications: [{
+                    title,
+                    body,
+                    id: Date.now(),
+                    schedule: { at: new Date(Date.now() + 100) }
+                }]
             });
-        });
-    }
+        } else if (Notification.permission === 'granted') {
+             new Notification(title, { body });
+        }
+    } catch (e) { console.error(e); }
   };
 
   // --- FIRESTORE SUBSCRIPTIONS ---
@@ -433,7 +453,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
             <div className="p-6 border-b border-gray-100"><h1 className="text-xl font-bold tracking-tight text-gray-900">Boscon <span className="text-blue-600">.Admin</span></h1></div>
             
             {/* Activar Notificaciones */}
-            {notifPermission === 'default' && (
+            {!notifEnabled && (
                 <div className="px-4 pt-4">
                     <button onClick={requestNotificationPermission} className="w-full py-2 bg-blue-50 text-blue-600 rounded-xl text-xs font-bold border border-blue-100 flex items-center justify-center gap-2 hover:bg-blue-100"><BellIcon className="w-4 h-4"/> Activar Alertas</button>
                 </div>
@@ -471,7 +491,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                         <button onClick={onLogout}><LogoutIcon className="w-5 h-5 text-gray-600" /></button>
                     </div>
                 </div>
-                {notifPermission === 'default' && (
+                {!notifEnabled && (
                     <div onClick={requestNotificationPermission} className="bg-blue-600 text-white text-xs font-bold py-2 px-4 text-center cursor-pointer">
                         Toca aquí para recibir alertas cuando terminen tareas.
                     </div>

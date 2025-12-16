@@ -1,8 +1,11 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { User, Task } from '../types';
 import { subscribeToTasks, toggleTaskCompletion, isTaskCompletedForDate, isTaskVisibleOnDate, subscribeToSettings, subscribeToAppNotifications, sendAppNotification } from '../services/dataService';
-import { CheckIcon, LogoutIcon, BellIcon } from './ui/Icons'; // Added BellIcon usage
+import { CheckIcon, LogoutIcon, BellIcon } from './ui/Icons';
 import { NotificationToast } from './ui/Notification';
+// Importamos Capacitor Core y Plugin
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { Capacitor } from '@capacitor/core';
 
 interface EmployeeDashboardProps {
   currentUser: User;
@@ -18,68 +21,95 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
   const [notificationType, setNotificationType] = useState<'info' | 'success'>('info');
   const [scheduledTimes, setScheduledTimes] = useState<string[]>([]);
   
-  // Estado para controlar permisos de notificación
-  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
-    typeof Notification !== 'undefined' ? Notification.permission : 'default'
-  );
+  // Estado simple para UI
+  const [notifEnabled, setNotifEnabled] = useState(false);
   
   // Refs to track logic for notifications
   const lastCheckTimestampRef = useRef<number>(Date.now());
   const initialLoadRef = useRef(true);
   const dashboardLoadTimeRef = useRef<number>(Date.now());
   
-  // Ref to prevent multiple alerts for the same TIME in the same day.
   const lastNotifiedTimeRef = useRef<string | null>(null);
   const lastNotifiedDateRef = useRef<string | null>(null);
-  // Track specific task notifications sent today to avoid dupes
   const notifiedTaskIdsRef = useRef<Set<string>>(new Set());
 
-  // --- SOLICITAR PERMISOS DE SISTEMA ---
+  // Verificar estado inicial de permisos al cargar
+  useEffect(() => {
+    const checkPerms = async () => {
+        if (Capacitor.isNativePlatform()) {
+            const perm = await LocalNotifications.checkPermissions();
+            setNotifEnabled(perm.display === 'granted');
+        } else if ('Notification' in window) {
+            setNotifEnabled(Notification.permission === 'granted');
+        }
+    };
+    checkPerms();
+  }, []);
+
+  // --- SOLICITAR PERMISOS (HÍBRIDO: NATIVO Y WEB) ---
   const requestNotificationPermission = async () => {
-    // Verificación segura para móviles donde Notification podría no estar implementado (iOS PWA sin instalar)
-    if (typeof Notification === 'undefined' || !('Notification' in window)) {
-        setNotificationMsg("Tu dispositivo no soporta notificaciones o necesitas agregar la App a la pantalla de inicio.");
-        return;
-    }
-    
     try {
-        const permission = await Notification.requestPermission();
-        setNotifPermission(permission);
-        if (permission === 'granted') {
-            sendSystemNotification("Notificaciones Activas", "Ahora recibirás recordatorios en tu dispositivo.");
-        } else if (permission === 'denied') {
-            setNotificationMsg("Has bloqueado las notificaciones. Revisa la configuración del navegador.");
+        if (Capacitor.isNativePlatform()) {
+            // Lógica Nativa (Android/iOS)
+            const result = await LocalNotifications.requestPermissions();
+            if (result.display === 'granted') {
+                setNotifEnabled(true);
+                sendSystemNotification("Boscon App", "Notificaciones nativas activadas correctamente.");
+            } else {
+                setNotificationMsg("Permisos denegados en configuración del dispositivo.");
+            }
+        } else {
+            // Lógica Web (Fallback)
+            if (!('Notification' in window)) {
+                setNotificationMsg("Este navegador no soporta notificaciones.");
+                return;
+            }
+            const permission = await Notification.requestPermission();
+            if (permission === 'granted') {
+                setNotifEnabled(true);
+                sendSystemNotification("Boscon Web", "Notificaciones activadas.");
+            }
         }
     } catch (e) {
         console.error("Error pidiendo permiso", e);
     }
   };
 
-  // --- ENVIAR NOTIFICACIÓN AL SISTEMA ---
-  const sendSystemNotification = (title: string, body: string) => {
-      // 1. Siempre mostrar toast interno como fallback
+  // --- ENVIAR NOTIFICACIÓN (HÍBRIDO) ---
+  const sendSystemNotification = async (title: string, body: string) => {
+      // 1. Toast interno siempre
       setNotificationMsg(body);
       setNotificationType('info');
 
-      // 2. Intentar enviar al centro de notificaciones
-      if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && navigator.serviceWorker) {
-          navigator.serviceWorker.ready.then((registration) => {
-              try {
-                  registration.showNotification(title, {
+      // 2. Notificación de Sistema
+      try {
+          if (Capacitor.isNativePlatform()) {
+              // Usar Plugin Nativo
+              await LocalNotifications.schedule({
+                  notifications: [{
+                      title: title,
                       body: body,
-                      icon: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTmf3SKqXHbDSUx84ijPnHgqampfkEGRjUt_A&s',
-                      badge: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTmf3SKqXHbDSUx84ijPnHgqampfkEGRjUt_A&s',
-                      vibrate: [200, 100, 200],
-                      tag: 'boscon-reminder' // Evita spam, reemplaza la anterior si existe
-                  } as any);
-              } catch(e) { console.error("SW Notification failed", e); }
-          });
+                      id: new Date().getTime(), // ID único basado en tiempo
+                      schedule: { at: new Date(Date.now() + 100) }, // Inmediato (100ms)
+                      sound: undefined,
+                      attachments: undefined,
+                      actionTypeId: "",
+                      extra: null
+                  }]
+              });
+          } else {
+              // Fallback Web Standard
+              if (Notification.permission === 'granted') {
+                 new Notification(title, { body, icon: '/vite.svg' });
+              }
+          }
+      } catch (e) {
+          console.error("Error enviando notificación", e);
       }
   };
 
   useEffect(() => {
     const unsubscribeTasks = subscribeToTasks((currentStoredTasks) => {
-        // Real-time listener
         setTasks(currentStoredTasks);
 
         // Logic 1: New Task Assignment Notification
@@ -97,8 +127,6 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
                 
                 sendSystemNotification("Nueva Tarea", message);
                 lastCheckTimestampRef.current = Date.now();
-                
-                // Haptic feedback
                 if(navigator.vibrate) navigator.vibrate(200);
             }
         } else {
@@ -110,7 +138,6 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
         if (settings && settings.notificationSchedule) {
             setScheduledTimes(settings.notificationSchedule);
         } else if (settings && settings.dailyNotificationTime) {
-            // Fallback for legacy
             setScheduledTimes([settings.dailyNotificationTime]);
         }
     });
@@ -141,7 +168,7 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
     return tasks.filter(t => t.assignedToUserId === currentUser.id && isTaskVisibleOnDate(t, todayStr));
   }, [tasks, currentUser.id, todayStr]);
 
-  // Logic 2: Scheduled Time Check (Both Global and Task Specific)
+  // Logic 2: Scheduled Time Check
   useEffect(() => {
       const checkScheduledNotification = () => {
           const now = new Date();
@@ -149,7 +176,6 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
           const currentMin = now.getMinutes();
           const todayDate = now.toISOString().split('T')[0];
           
-          // Reset trackers if day changed
           if (lastNotifiedDateRef.current !== todayDate) {
               lastNotifiedDateRef.current = todayDate;
               lastNotifiedTimeRef.current = null;
@@ -170,9 +196,8 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
               if (latestPassedTime && latestPassedTime !== lastNotifiedTimeRef.current) {
                   const pendingCount = myTasks.filter(t => !isTaskCompletedForDate(t, todayStr)).length;
                   if (pendingCount > 0) {
-                      const message = `Tienes ${pendingCount} tareas pendientes. ¡No olvides completarlas!`;
+                      const message = `Tienes ${pendingCount} tareas pendientes.`;
                       sendSystemNotification(`Recordatorio ${latestPassedTime}`, message);
-                      if(navigator.vibrate) navigator.vibrate([100, 50, 100]);
                       lastNotifiedTimeRef.current = latestPassedTime; 
                   }
               }
@@ -186,20 +211,15 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
 
                   const [tH, tM] = task.notificationTime.split(':').map(Number);
                   
-                  // Check if current time matches target time (within same minute)
                   if (currentHour === tH && currentMin === tM) {
                        sendSystemNotification("Recordatorio de Tarea", `Hora de realizar: "${task.title}"`);
-                       if(navigator.vibrate) navigator.vibrate([200, 200, 200]);
                        notifiedTaskIdsRef.current.add(notifKey);
                   }
               }
           });
       };
 
-      // Check every minute
       const interval = setInterval(checkScheduledNotification, 60000);
-      
-      // Check immediately
       const timeout = setTimeout(checkScheduledNotification, 2000);
 
       return () => {
@@ -235,11 +255,9 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
           e.stopPropagation();
           const res = await toggleTaskCompletion(task.id);
           if (res && res.lastCompletedDate) {
-              // Task finished
               setNotificationMsg("¡Buen trabajo! Tarea completada.");
               setNotificationType('success');
               
-              // Notify Admin
               await sendAppNotification({
                   type: 'TASK_COMPLETED',
                   message: `${currentUser.name} completó: "${task.title}"`,
@@ -300,7 +318,7 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
                 </div>
                 
                 {/* Botón de permiso para iOS/Android */}
-                {notifPermission === 'default' && (
+                {!notifEnabled && (
                     <button 
                         onClick={requestNotificationPermission}
                         className="w-full mb-6 py-3 bg-blue-50 text-blue-600 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 border border-blue-100 hover:bg-blue-100 transition-colors animate-pulse"
