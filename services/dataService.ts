@@ -190,6 +190,24 @@ export const verifyPin = async (pin: string): Promise<User | null> => {
     return null;
 };
 
+export const getUserById = async (userId: string): Promise<User | null> => {
+    // Checar caché
+    const cached = cachedUsers.find(u => u.id === userId);
+    if (cached) return cached;
+
+    // Consultar BD directa
+    try {
+        const userRef = ref(db, `${USERS_PATH}/${userId}`);
+        const snapshot = await get(userRef);
+        if (snapshot.exists()) {
+            return snapshot.val() as User;
+        }
+    } catch (e) {
+        console.error("Error fetching user by ID", e);
+    }
+    return null;
+};
+
 // --- LOGIC HELPERS ---
 
 export const getMondayOfWeek = (dateStr: string) => {
