@@ -14,27 +14,45 @@ const App: React.FC = () => {
 
   // Check for persisted session on mount
   useEffect(() => {
+    let isMounted = true;
+
     const checkSession = async () => {
         const storedUid = localStorage.getItem('boscon_session_uid');
         if (storedUid) {
             try {
-                // Attempt to fetch the user from cache or DB
-                const persistedUser = await getUserById(storedUid);
-                if (persistedUser) {
+                // Race condition: Fetch user OR timeout after 3 seconds
+                // This prevents the app from hanging on the splash screen if DB is slow
+                const fetchUserPromise = getUserById(storedUid);
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error("Timeout")), 3000)
+                );
+
+                const persistedUser = await Promise.race([fetchUserPromise, timeoutPromise]) as User | null;
+                
+                if (isMounted && persistedUser) {
                     setUser(persistedUser);
                 } else {
-                    // Invalid ID (user deleted), clear storage
-                    localStorage.removeItem('boscon_session_uid');
+                     // If user not found or timeout, clear invalid session
+                     localStorage.removeItem('boscon_session_uid');
                 }
             } catch (e) {
-                console.error("Error restoring session", e);
+                console.warn("Session restore timed out or failed:", e);
+                // Non-critical error, just proceed to login screen
             }
         }
-        // Artificial delay for smooth UX transition or just end loading
-        setTimeout(() => setIsLoadingSession(false), 500);
+        
+        if (isMounted) {
+            // Ensure minimum splash screen time for smoothness, but force finish
+            setIsLoadingSession(false);
+        }
     };
 
-    checkSession();
+    // Minimum delay to prevent flash of content
+    setTimeout(() => {
+        checkSession();
+    }, 500);
+
+    return () => { isMounted = false; };
   }, []);
 
   const handleLogin = (loggedInUser: User) => {
@@ -84,7 +102,6 @@ const App: React.FC = () => {
 
   return (
     // Root container: Uses standard iOS background color.
-    // Removes fixed widths to allow child components to handle their own responsiveness completely.
     <div className="min-h-screen bg-[#F2F2F7] text-gray-900 font-sans selection:bg-blue-500 selection:text-white">
         {user.role === UserRole.ADMIN ? (
           <AdminDashboard currentUser={user} onLogout={handleLogout} />

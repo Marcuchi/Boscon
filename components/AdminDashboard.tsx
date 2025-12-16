@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Task, UserRole, TaskFrequency } from '../types';
-import { subscribeToUsers, subscribeToTasks, saveTask, deleteTask, addUser, deleteUser, isTaskCompletedForDate, isTaskVisibleOnDate, getMondayOfWeek } from '../services/dataService';
-import { PlusIcon, TrashIcon, LogoutIcon, PencilIcon, EllipsisHorizontalIcon, ChevronRightIcon, XMarkIcon, UserIcon } from './ui/Icons';
+import { subscribeToUsers, subscribeToTasks, saveTask, deleteTask, addUser, deleteUser, isTaskCompletedForDate, isTaskVisibleOnDate, getMondayOfWeek, subscribeToSettings, updateSettings } from '../services/dataService';
+import { PlusIcon, TrashIcon, LogoutIcon, PencilIcon, EllipsisHorizontalIcon, ChevronRightIcon, XMarkIcon, UserIcon, CogIcon } from './ui/Icons';
 
 interface AdminDashboardProps {
   currentUser: User;
@@ -74,6 +74,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const [showUserModal, setShowUserModal] = useState(false);
   const [showEmployeeMenu, setShowEmployeeMenu] = useState(false);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   
   // Forms
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -82,10 +83,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const [taskFrequency, setTaskFrequency] = useState<TaskFrequency>('DAILY');
   const [selectedDays, setSelectedDays] = useState<number[]>([]); 
 
+  // User Form (Create/Edit)
+  const [isEditingUser, setIsEditingUser] = useState(false);
   const [newUserName, setNewUserName] = useState('');
   const [newUserPin, setNewUserPin] = useState('');
   const [newUserPosition, setNewUserPosition] = useState('');
   const [newUserAvatar, setNewUserAvatar] = useState('');
+
+  // Settings Form (Multiple Times)
+  const [notifSchedule, setNotifSchedule] = useState<string[]>([]);
+  const [tempTime, setTempTime] = useState('');
 
   const WEEKDAYS_HEADER = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
@@ -98,7 +105,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
         if (!selectedUser && employees.length > 0) {
             setSelectedUser(employees[0]);
         } else if (selectedUser) {
-            // Update selected user info in case it changed
+            // Update selected user info in case it changed (retaining selection)
             const updated = employees.find(u => u.id === selectedUser.id);
             if (updated) setSelectedUser(updated);
             else if (employees.length > 0) setSelectedUser(employees[0]);
@@ -110,9 +117,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
         setTasks(data);
     });
 
+    const unsubSettings = subscribeToSettings((data) => {
+        if(data) {
+            setNotifSchedule(data.notificationSchedule || []);
+        }
+    });
+
     return () => {
         unsubUsers();
         unsubTasks();
+        unsubSettings();
     };
   }, []); // Run once on mount
 
@@ -170,21 +184,47 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
       }
   };
 
-  const handleCreateUser = async () => {
+  // Prepara el modal para crear un nuevo usuario
+  const openCreateUserModal = () => {
+      setIsEditingUser(false);
+      setNewUserName('');
+      setNewUserPin('');
+      setNewUserPosition('');
+      setNewUserAvatar('');
+      setShowUserModal(true);
+  };
+
+  // Prepara el modal para editar usuario existente
+  const openEditUserModal = () => {
+      if (!selectedUser) return;
+      setIsEditingUser(true);
+      setNewUserName(selectedUser.name);
+      setNewUserPin(selectedUser.pin);
+      setNewUserPosition(selectedUser.position || '');
+      setNewUserAvatar(selectedUser.avatarUrl || '');
+      setShowEmployeeMenu(false); // Cerrar menú de opciones
+      setShowUserModal(true);
+  };
+
+  const handleSaveUser = async () => {
       if (!newUserName.trim() || !newUserPin.trim()) return;
       const avatar = newUserAvatar.trim() || `https://ui-avatars.com/api/?name=${encodeURIComponent(newUserName)}&background=random`;
       
-      const newUser: User = {
-          id: Math.random().toString(36).substr(2, 9),
+      const userId = isEditingUser && selectedUser ? selectedUser.id : Math.random().toString(36).substr(2, 9);
+
+      const userToSave: User = {
+          id: userId,
           name: newUserName,
           role: UserRole.EMPLOYEE,
           pin: newUserPin,
           avatarUrl: avatar,
           position: newUserPosition || 'Empleado'
       };
-      await addUser(newUser);
-      // No need to setUsers manually, subscription handles it
-      setSelectedUser(newUser);
+      
+      await addUser(userToSave);
+      
+      // Si estamos creando, seleccionamos el nuevo. Si editamos, actualizamos selección.
+      setSelectedUser(userToSave);
       setShowUserModal(false);
   };
 
@@ -194,6 +234,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
           setShowEmployeeMenu(false);
           // Subscription updates UI
       }
+  };
+
+  const handleAddNotificationTime = () => {
+      if (tempTime && !notifSchedule.includes(tempTime)) {
+          const newSchedule = [...notifSchedule, tempTime].sort();
+          setNotifSchedule(newSchedule);
+          setTempTime('');
+      }
+  };
+
+  const handleRemoveNotificationTime = (time: string) => {
+      setNotifSchedule(notifSchedule.filter(t => t !== time));
+  };
+
+  const handleSaveSettings = async () => {
+      await updateSettings({ notificationSchedule: notifSchedule });
+      setShowSettingsModal(false);
   };
 
   const openEditModal = (task: Task) => {
@@ -305,18 +362,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                         {selectedUser?.id === u.id && <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />}
                     </button>
                 ))}
-                <button onClick={() => { setNewUserName(''); setNewUserPin(''); setNewUserAvatar(''); setShowUserModal(true); }} className="w-full flex items-center gap-3 p-2 mt-4 rounded-xl border border-dashed border-gray-300 text-gray-500 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-700 transition-all">
+                <button onClick={openCreateUserModal} className="w-full flex items-center gap-3 p-2 mt-4 rounded-xl border border-dashed border-gray-300 text-gray-500 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-700 transition-all">
                     <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center"><PlusIcon className="w-5 h-5" /></div>
                     <span className="text-sm font-medium">Agregar Empleado</span>
                 </button>
             </div>
-            <div className="p-4 border-t border-gray-200"><button onClick={onLogout} className="w-full flex items-center gap-2 p-2 text-sm text-gray-500 hover:text-red-600 transition-colors"><LogoutIcon className="w-5 h-5" /> Cerrar Sesión</button></div>
+            <div className="p-4 border-t border-gray-200 flex flex-col gap-2">
+                <button onClick={() => setShowSettingsModal(true)} className="w-full flex items-center gap-2 p-2 text-sm text-gray-500 hover:text-gray-800 transition-colors"><CogIcon className="w-5 h-5" /> Configuración</button>
+                <button onClick={onLogout} className="w-full flex items-center gap-2 p-2 text-sm text-gray-500 hover:text-red-600 transition-colors"><LogoutIcon className="w-5 h-5" /> Cerrar Sesión</button>
+            </div>
         </aside>
 
         {/* --- MAIN CONTENT --- */}
         <main className="flex-1 flex flex-col h-full overflow-hidden relative">
             <div className="md:hidden bg-white/80 backdrop-blur-md z-20 sticky top-0 border-b border-gray-200">
-                <div className="flex justify-between items-center px-4 py-3"><h1 className="font-bold text-lg">Admin</h1><button onClick={onLogout}><LogoutIcon className="w-5 h-5 text-gray-600" /></button></div>
+                <div className="flex justify-between items-center px-4 py-3">
+                    <h1 className="font-bold text-lg">Admin</h1>
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => setShowSettingsModal(true)}><CogIcon className="w-5 h-5 text-gray-600" /></button>
+                        <button onClick={onLogout}><LogoutIcon className="w-5 h-5 text-gray-600" /></button>
+                    </div>
+                </div>
                 <div className="flex gap-4 overflow-x-auto px-4 pb-3 no-scrollbar">
                     {users.map(u => (
                         <div key={u.id} onClick={() => setSelectedUser(u)} className="flex flex-col items-center gap-1 flex-shrink-0 cursor-pointer">
@@ -324,7 +390,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                             <span className="text-[10px] font-medium text-gray-600 truncate max-w-[60px]">{u.name.split(' ')[0]}</span>
                         </div>
                     ))}
-                    <button onClick={() => { setNewUserName(''); setNewUserPin(''); setNewUserAvatar(''); setShowUserModal(true); }} className="flex flex-col items-center gap-1 flex-shrink-0">
+                    <button onClick={openCreateUserModal} className="flex flex-col items-center gap-1 flex-shrink-0">
                         <div className="w-14 h-14 rounded-full border border-dashed border-gray-400 flex items-center justify-center bg-gray-50"><PlusIcon className="w-6 h-6 text-gray-400" /></div>
                         <span className="text-[10px] font-medium text-gray-400">Nuevo</span>
                     </button>
@@ -411,7 +477,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
              </div>
         </ResponsiveModal>
 
-        <ResponsiveModal isOpen={showUserModal} onClose={() => setShowUserModal(false)} title="Nuevo Empleado">
+        {/* MODAL USUARIO (CREAR Y EDITAR) */}
+        <ResponsiveModal isOpen={showUserModal} onClose={() => setShowUserModal(false)} title={isEditingUser ? "Editar Empleado" : "Nuevo Empleado"}>
             <div className="space-y-4">
                  <div><label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Nombre</label><input type="text" value={newUserName} onChange={e => setNewUserName(e.target.value)} className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ej. Ana Pérez" /></div>
                  <div><label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Contraseña</label><input type="text" value={newUserPin} onChange={e => setNewUserPin(e.target.value)} className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Contraseña segura" /></div>
@@ -426,15 +493,68 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                      </div>
                  </div>
                  <div><label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Puesto</label><input type="text" value={newUserPosition} onChange={e => setNewUserPosition(e.target.value)} className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Ej. Cocinero" /></div>
-                 <Button fullWidth onClick={handleCreateUser} disabled={!newUserName || newUserPin.length < 1}>Crear Empleado</Button>
+                 <Button fullWidth onClick={handleSaveUser} disabled={!newUserName || newUserPin.length < 1}>{isEditingUser ? "Guardar Cambios" : "Crear Empleado"}</Button>
             </div>
         </ResponsiveModal>
 
+        {/* MENU OPCIONES EMPLEADO */}
         <ResponsiveModal isOpen={showEmployeeMenu} onClose={() => setShowEmployeeMenu(false)} title="Opciones">
              <div className="space-y-4">
                  <div className="p-4 bg-gray-50 rounded-2xl flex items-center gap-4"><img src={selectedUser?.avatarUrl} className="w-12 h-12 rounded-full" /><div><p className="font-bold text-gray-900">{selectedUser?.name}</p><p className="text-sm text-gray-500">PIN: <span className="font-mono bg-gray-200 px-1 rounded">{selectedUser?.pin}</span></p></div></div>
-                 <div className="p-4 bg-red-50 rounded-2xl border border-red-100"><h4 className="font-bold text-red-700 text-sm mb-2">Zona de Peligro</h4><p className="text-xs text-red-600 mb-4">Eliminar este empleado borrará su historial y tareas.</p><button onClick={handleDeleteUserAsync} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold shadow-lg shadow-red-500/20 active:scale-95 transition-transform">Eliminar Empleado</button></div>
+                 
+                 <button onClick={openEditUserModal} className="w-full py-3 bg-white border border-gray-200 text-gray-700 rounded-xl font-semibold shadow-sm hover:bg-gray-50 transition-colors flex items-center justify-center gap-2">
+                    <PencilIcon className="w-4 h-4 text-gray-500" /> Editar Perfil
+                 </button>
+
+                 <div className="p-4 bg-red-50 rounded-2xl border border-red-100 mt-2"><h4 className="font-bold text-red-700 text-sm mb-2">Zona de Peligro</h4><p className="text-xs text-red-600 mb-4">Eliminar este empleado borrará su historial y tareas.</p><button onClick={handleDeleteUserAsync} className="w-full py-3 bg-red-600 text-white rounded-xl font-bold shadow-lg shadow-red-500/20 active:scale-95 transition-transform">Eliminar Empleado</button></div>
              </div>
+        </ResponsiveModal>
+
+        {/* SETTINGS MODAL */}
+        <ResponsiveModal isOpen={showSettingsModal} onClose={() => setShowSettingsModal(false)} title="Configuración">
+            <div className="space-y-6">
+                <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+                    <h4 className="text-sm font-bold text-blue-900 mb-1 flex items-center gap-2"><CogIcon className="w-4 h-4" /> Horarios de Notificación</h4>
+                    <p className="text-xs text-blue-700 leading-relaxed">Configura las horas a las que los empleados recibirán una alerta si tienen tareas pendientes. Puedes añadir múltiples alertas al día.</p>
+                </div>
+                
+                <div className="space-y-3">
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block">Agregar Nueva Hora</label>
+                    <div className="flex gap-2">
+                        <input 
+                            type="time" 
+                            value={tempTime} 
+                            onChange={(e) => setTempTime(e.target.value)}
+                            className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-lg font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                        />
+                        <button 
+                            onClick={handleAddNotificationTime} 
+                            disabled={!tempTime}
+                            className="px-4 bg-black text-white rounded-xl font-bold disabled:opacity-50"
+                        >
+                            <PlusIcon className="w-6 h-6" />
+                        </button>
+                    </div>
+                </div>
+
+                <div>
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-2">Horarios Activos</label>
+                    {notifSchedule.length === 0 ? (
+                        <p className="text-sm text-gray-400 italic bg-gray-50 p-3 rounded-xl border border-dashed border-gray-300 text-center">No hay alertas configuradas.</p>
+                    ) : (
+                        <div className="grid grid-cols-3 gap-2">
+                            {notifSchedule.map(time => (
+                                <div key={time} className="flex items-center justify-between bg-white border border-gray-200 px-3 py-2 rounded-lg shadow-sm">
+                                    <span className="font-mono font-semibold text-gray-800">{time}</span>
+                                    <button onClick={() => handleRemoveNotificationTime(time)} className="text-red-400 hover:text-red-600"><XMarkIcon className="w-4 h-4" /></button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <Button fullWidth onClick={handleSaveSettings}>Guardar Configuración</Button>
+            </div>
         </ResponsiveModal>
     </div>
   );

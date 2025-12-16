@@ -14,6 +14,7 @@ import {
 
 const USERS_PATH = 'users';
 const TASKS_PATH = 'tasks';
+const SETTINGS_PATH = 'settings';
 
 // Initial Mock Data for Seeding
 const INITIAL_USERS: User[] = [
@@ -27,6 +28,11 @@ const INITIAL_TASKS: Task[] = [
   { id: 't2', title: 'Inventario de químicos', description: 'Contar botellas de cloro, jabón y desengrasante. Anotar faltantes.', assignedToUserId: 'u2', frequency: 'WEEKLY', repeatDays: [], lastCompletedDate: null, createdAt: Date.now() }, 
   { id: 't3', title: 'Revisar temperaturas', description: 'Verificar termostatos de neveras 1, 2 y congelador.', assignedToUserId: 'u3', frequency: 'DAILY', repeatDays: [0,1,2,3,4,5,6], lastCompletedDate: null, createdAt: Date.now() },
 ];
+
+const INITIAL_SETTINGS = {
+    // Array of time strings "HH:MM"
+    notificationSchedule: ["09:00", "17:00"] 
+};
 
 let cachedUsers: User[] = [];
 
@@ -62,6 +68,13 @@ export const initializeData = async () => {
       });
       await update(ref(db), updates);
     }
+
+    const settingsRef = ref(db, SETTINGS_PATH);
+    const settingsSnapshot = await get(settingsRef);
+    if (!settingsSnapshot.exists()) {
+        await set(settingsRef, INITIAL_SETTINGS);
+    }
+
   } catch (e) {
     console.error("Error initializing data:", e);
   }
@@ -93,14 +106,40 @@ export const subscribeToTasks = (callback: (tasks: Task[]) => void) => {
   });
 };
 
+export const subscribeToSettings = (callback: (settings: any) => void) => {
+    const settingsRef = ref(db, SETTINGS_PATH);
+    return onValue(settingsRef, (snapshot) => {
+        let val = snapshot.val();
+        if (!val) val = INITIAL_SETTINGS;
+        
+        // Backwards compatibility: ensure notificationSchedule exists
+        if (!val.notificationSchedule && val.dailyNotificationTime) {
+            val.notificationSchedule = [val.dailyNotificationTime];
+        } else if (!val.notificationSchedule) {
+            val.notificationSchedule = [];
+        }
+        
+        callback(val);
+    });
+};
+
 // --- CRUD OPERATIONS ---
+
+export const updateSettings = async (settings: any) => {
+    try {
+        await update(ref(db, SETTINGS_PATH), settings);
+    } catch (e) {
+        console.error("Error updating settings", e);
+    }
+};
 
 export const addUser = async (user: User) => {
   try {
-    // Usamos el ID del usuario como clave en el nodo
+    // Usamos el ID del usuario como clave en el nodo. 
+    // Si el ID ya existe, esto actua como un UPDATE.
     await set(ref(db, `${USERS_PATH}/${user.id}`), sanitize(user));
   } catch (e) {
-      console.error("Error adding user", e);
+      console.error("Error adding/updating user", e);
   }
 };
 

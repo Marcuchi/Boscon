@@ -15,14 +15,31 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
   // 1. Carga de datos inicial
   useEffect(() => {
+    let mounted = true;
+
+    // Safety timeout: If Firebase takes too long (> 4s), stop loading spinner to allow interaction
+    const safetyTimer = setTimeout(() => {
+        if (mounted && isLoadingData) {
+            console.warn("Connection slow, forcing UI ready state.");
+            setIsLoadingData(false);
+        }
+    }, 4000);
+
     const unsubscribe = subscribeToUsers(
         (data) => {
-            setUsers(data);
-            setIsLoadingData(false);
+            if (mounted) {
+                setUsers(data);
+                setIsLoadingData(false);
+            }
         },
         (err) => console.error("Error connection", err)
     );
-    return () => unsubscribe();
+    
+    return () => {
+        mounted = false;
+        clearTimeout(safetyTimer);
+        unsubscribe();
+    };
   }, []);
 
   const handleLogin = (e?: React.FormEvent) => {
@@ -34,6 +51,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
     
     // Simulamos un pequeño delay de red para feedback visual
     setTimeout(() => {
+        // If users list is empty (connection failed), we can't login, but we handle it gracefully
         const user = users.find(u => u.pin === password);
         
         if (user) {
@@ -124,18 +142,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           </form>
 
           {/* Connection Status */}
-          <div className="h-6 mt-6 flex justify-center">
-              {isLoadingData && (
+          <div className="h-6 mt-6 flex justify-center w-full">
+              {isLoadingData ? (
                   <p className="text-[10px] text-white/30 animate-pulse flex items-center gap-1.5">
                       <span className="w-1.5 h-1.5 bg-green-500 rounded-full shadow-[0_0_5px_rgba(34,197,94,0.5)]"></span> Conectando con servidor...
                   </p>
+              ) : (
+                  users.length === 0 && (
+                      <p className="text-[10px] text-red-400/60 flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 bg-red-500 rounded-full"></span> Sin conexión (Usando caché)
+                      </p>
+                  )
               )}
           </div>
       </div>
 
       {/* Footer Info */}
       <div className="absolute bottom-4 w-full text-center z-0">
-         <p className="text-[10px] text-white/20 font-mono">v1.3 • Secure Access</p>
+         <p className="text-[10px] text-white/20 font-mono">v1.4 • Secure Access</p>
       </div>
 
       {/* Global Styles for Shake Animation */}

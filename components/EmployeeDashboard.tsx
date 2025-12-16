@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { User, Task } from '../types';
-import { subscribeToTasks, toggleTaskCompletion, isTaskCompletedForDate, isTaskVisibleOnDate } from '../services/dataService';
+import { subscribeToTasks, toggleTaskCompletion, isTaskCompletedForDate, isTaskVisibleOnDate, subscribeToSettings } from '../services/dataService';
 import { CheckIcon, LogoutIcon } from './ui/Icons';
 import { NotificationToast } from './ui/Notification';
 
@@ -15,17 +15,24 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
   const todayStr = new Date().toISOString().split('T')[0];
 
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
+  const [notificationType, setNotificationType] = useState<'info' | 'success'>('info');
+  const [scheduledTimes, setScheduledTimes] = useState<string[]>([]);
   
-  // Ref to track logic for notifications
+  // Refs to track logic for notifications
   const lastCheckTimestampRef = useRef<number>(Date.now());
   const initialLoadRef = useRef(true);
+  
+  // Ref to prevent multiple alerts for the same TIME in the same day.
+  // Stores the last specific time string notified today, e.g., "14:00"
+  const lastNotifiedTimeRef = useRef<string | null>(null);
+  const lastNotifiedDateRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const unsubscribe = subscribeToTasks((currentStoredTasks) => {
+    const unsubscribeTasks = subscribeToTasks((currentStoredTasks) => {
         // Real-time listener
         setTasks(currentStoredTasks);
 
-        // Notification Logic
+        // Logic 1: New Task Assignment Notification
         if (!initialLoadRef.current) {
              const newIncomingTasks = currentStoredTasks.filter(t => 
                 t.assignedToUserId === currentUser.id && 
@@ -38,18 +45,123 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
                     ? `Nueva tarea asignada: "${newIncomingTasks[0].title}"`
                     : `Tienes ${count} tareas nuevas asignadas.`;
                 setNotificationMsg(message);
+                setNotificationType('info');
                 lastCheckTimestampRef.current = Date.now();
+                
+                // Haptic feedback
+                if(navigator.vibrate) navigator.vibrate(200);
             }
         } else {
             initialLoadRef.current = false;
         }
     });
-    return () => unsubscribe();
+
+    const unsubscribeSettings = subscribeToSettings((settings) => {
+        if (settings && settings.notificationSchedule) {
+            setScheduledTimes(settings.notificationSchedule);
+        } else if (settings && settings.dailyNotificationTime) {
+            // Fallback for legacy
+            setScheduledTimes([settings.dailyNotificationTime]);
+        }
+    });
+
+    return () => {
+        unsubscribeTasks();
+        unsubscribeSettings();
+    };
   }, [currentUser.id]);
 
   const myTasks = useMemo(() => {
     return tasks.filter(t => t.assignedToUserId === currentUser.id && isTaskVisibleOnDate(t, todayStr));
   }, [tasks, currentUser.id, todayStr]);
+
+  // Logic 2: Scheduled Time Check (Multiple Times)
+  useEffect(() => {
+      const checkScheduledNotification = () => {
+          if (scheduledTimes.length === 0) return;
+          
+          const now = new Date();
+          const currentHour = now.getHours();
+          const currentMin = now.getMinutes();
+          const todayDate = now.toISOString().split('T')[0];
+          
+          // Reset tracker if day changed
+          if (lastNotifiedDateRef.current !== todayDate) {
+              lastNotifiedDateRef.current = todayDate;
+              lastNotifiedTimeRef.current = null;
+          }
+
+          // Check each scheduled time
+          for (const timeStr of scheduledTimes) {
+              const [schedHour, schedMin] = timeStr.split(':').map(Number);
+              
+              // We check if "now" is the minute of the schedule or just passed it within the last minute
+              // To be safe against interval delays, we check:
+              // 1. Is it currently past the time?
+              // 2. Have we NOT notified for this specific time today?
+              // 3. Is it within a reasonable window (e.g. < 59 mins past) so we don't spam on page reload if user loads at 5PM and had a 9AM alarm?
+              //    ACTUALLY, standard behavior is: if I login and I missed a notification, show it. But only ONCE per login session for that time slot.
+              //    Let's stick to "Just passed or is current minute".
+              
+              const isPast = (currentHour > schedHour) || (currentHour === schedHour && currentMin >= schedMin);
+              
+              if (isPast) {
+                  // Ensure we haven't already done this specific time slot
+                  if (lastNotifiedTimeRef.current !== timeStr) {
+                      
+                      // Check pending tasks
+                      const pendingCount = myTasks.filter(t => !isTaskCompletedForDate(t, todayStr)).length;
+                      
+                      if (pendingCount > 0) {
+                          // Only trigger if it's reasonably close (within 30 mins) OR we want persistent reminders?
+                          // Let's do persistent: If time passed and not notified yet, do it.
+                          // But we need to make sure we don't re-trigger lower times if we just hit a later one.
+                          // Simple logic: Trigger the *latest* applicable time that hasn't been triggered.
+                          // Due to loop order, we might trigger multiple if we load late.
+                          // Better: Find the latest passed time.
+                      }
+                  }
+              }
+          }
+
+          // Optimized Approach: Find the most recent passed schedule time
+          let latestPassedTime: string | null = null;
+          
+          // Sort times to be sure
+          const sortedTimes = [...scheduledTimes].sort();
+
+          for (const timeStr of sortedTimes) {
+             const [h, m] = timeStr.split(':').map(Number);
+             if ((currentHour > h) || (currentHour === h && currentMin >= m)) {
+                 latestPassedTime = timeStr;
+             }
+          }
+
+          if (latestPassedTime && latestPassedTime !== lastNotifiedTimeRef.current) {
+              const pendingCount = myTasks.filter(t => !isTaskCompletedForDate(t, todayStr)).length;
+              if (pendingCount > 0) {
+                  setNotificationMsg(`Recordatorio (${latestPassedTime}): Tienes ${pendingCount} tareas pendientes.`);
+                  setNotificationType('info');
+                  if(navigator.vibrate) navigator.vibrate([100, 50, 100]);
+                  
+                  // Mark as handled so we don't repeat until next scheduled time passed
+                  lastNotifiedTimeRef.current = latestPassedTime; 
+              }
+          }
+      };
+
+      // Check every minute
+      const interval = setInterval(checkScheduledNotification, 60000);
+      
+      // Check immediately
+      const timeout = setTimeout(checkScheduledNotification, 2000);
+
+      return () => {
+          clearInterval(interval);
+          clearTimeout(timeout);
+      };
+  }, [scheduledTimes, myTasks, todayStr]);
+
 
   const sortTasks = (taskList: Task[]) => {
       return taskList.sort((a, b) => {
@@ -73,6 +185,16 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
       const isCompleted = isTaskCompletedForDate(task, todayStr);
       const isExpanded = expandedTaskId === task.id;
       
+      const handleToggle = async (e: React.MouseEvent) => {
+          e.stopPropagation();
+          const res = await toggleTaskCompletion(task.id);
+          if (res && res.lastCompletedDate) {
+              // Task finished
+              setNotificationMsg("¡Buen trabajo! Tarea completada.");
+              setNotificationType('success');
+          }
+      };
+      
       return (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-3 animate-[fadeIn_0.3s]">
               <div 
@@ -80,7 +202,7 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
                 className={`p-4 flex items-center gap-4 cursor-pointer transition-colors ${isCompleted ? 'bg-gray-50' : 'bg-white'}`}
               >
                   <button 
-                     onClick={(e) => { e.stopPropagation(); toggleTaskCompletion(task.id); }}
+                     onClick={handleToggle}
                      className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center border-2 transition-all ${isCompleted ? 'bg-green-500 border-green-500 scale-110' : 'border-gray-300 hover:border-blue-400'}`}
                   >
                       {isCompleted && <CheckIcon className="w-4 h-4 text-white" />}
@@ -105,6 +227,7 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
         <NotificationToast 
             message={notificationMsg || ''} 
             visible={!!notificationMsg} 
+            type={notificationType}
             onClose={() => setNotificationMsg(null)} 
         />
 
