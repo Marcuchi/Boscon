@@ -30,6 +30,12 @@ const INITIAL_TASKS: Task[] = [
 
 let cachedUsers: User[] = [];
 
+// --- HELPER ---
+const sanitize = (obj: any) => {
+  // Removes undefined values to prevent Firebase errors
+  return JSON.parse(JSON.stringify(obj));
+};
+
 // --- SEED DATABASE ---
 export const initializeData = async () => {
   try {
@@ -92,7 +98,7 @@ export const subscribeToTasks = (callback: (tasks: Task[]) => void) => {
 export const addUser = async (user: User) => {
   try {
     // Usamos el ID del usuario como clave en el nodo
-    await set(ref(db, `${USERS_PATH}/${user.id}`), user);
+    await set(ref(db, `${USERS_PATH}/${user.id}`), sanitize(user));
   } catch (e) {
       console.error("Error adding user", e);
   }
@@ -124,7 +130,7 @@ export const deleteUser = async (userId: string) => {
 
 export const saveTask = async (task: Task) => {
   try {
-    await set(ref(db, `${TASKS_PATH}/${task.id}`), task);
+    await set(ref(db, `${TASKS_PATH}/${task.id}`), sanitize(task));
     return task;
   } catch (e) {
       console.error("Error saving task", e);

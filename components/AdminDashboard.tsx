@@ -147,10 +147,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
         assignedToUserId: selectedUser.id,
         frequency: taskFrequency,
         repeatDays: finalRepeatDays,
-        scheduledDate: (taskFrequency === 'DAILY' && finalRepeatDays.length === 0) ? viewDate : undefined,
+        // scheduledDate se asigna condicionalmente abajo para evitar undefined
         lastCompletedDate: editingTask ? editingTask.lastCompletedDate : null,
         createdAt: editingTask ? editingTask.createdAt : Date.now()
     };
+
+    if (taskFrequency === 'DAILY' && finalRepeatDays.length === 0) {
+        newTask.scheduledDate = viewDate;
+    }
 
     await saveTask(newTask);
     setShowAddModal(false);
