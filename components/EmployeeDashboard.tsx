@@ -31,11 +31,14 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
   // Ref to prevent multiple alerts for the same TIME in the same day.
   const lastNotifiedTimeRef = useRef<string | null>(null);
   const lastNotifiedDateRef = useRef<string | null>(null);
+  // Track specific task notifications sent today to avoid dupes
+  const notifiedTaskIdsRef = useRef<Set<string>>(new Set());
 
   // --- SOLICITAR PERMISOS DE SISTEMA ---
   const requestNotificationPermission = async () => {
-    if (!('Notification' in window)) {
-        alert("Este navegador no soporta notificaciones de escritorio.");
+    // Verificación segura para móviles donde Notification podría no estar implementado (iOS PWA sin instalar)
+    if (typeof Notification === 'undefined' || !('Notification' in window)) {
+        setNotificationMsg("Tu dispositivo no soporta notificaciones o necesitas agregar la App a la pantalla de inicio.");
         return;
     }
     
@@ -44,6 +47,8 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
         setNotifPermission(permission);
         if (permission === 'granted') {
             sendSystemNotification("Notificaciones Activas", "Ahora recibirás recordatorios en tu dispositivo.");
+        } else if (permission === 'denied') {
+            setNotificationMsg("Has bloqueado las notificaciones. Revisa la configuración del navegador.");
         }
     } catch (e) {
         console.error("Error pidiendo permiso", e);
@@ -57,15 +62,17 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
       setNotificationType('info');
 
       // 2. Intentar enviar al centro de notificaciones
-      if (Notification.permission === 'granted' && navigator.serviceWorker) {
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && navigator.serviceWorker) {
           navigator.serviceWorker.ready.then((registration) => {
-              registration.showNotification(title, {
-                  body: body,
-                  icon: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTmf3SKqXHbDSUx84ijPnHgqampfkEGRjUt_A&s',
-                  badge: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTmf3SKqXHbDSUx84ijPnHgqampfkEGRjUt_A&s',
-                  vibrate: [200, 100, 200],
-                  tag: 'boscon-reminder' // Evita spam, reemplaza la anterior si existe
-              } as any);
+              try {
+                  registration.showNotification(title, {
+                      body: body,
+                      icon: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTmf3SKqXHbDSUx84ijPnHgqampfkEGRjUt_A&s',
+                      badge: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTmf3SKqXHbDSUx84ijPnHgqampfkEGRjUt_A&s',
+                      vibrate: [200, 100, 200],
+                      tag: 'boscon-reminder' // Evita spam, reemplaza la anterior si existe
+                  } as any);
+              } catch(e) { console.error("SW Notification failed", e); }
           });
       }
   };
@@ -134,49 +141,59 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
     return tasks.filter(t => t.assignedToUserId === currentUser.id && isTaskVisibleOnDate(t, todayStr));
   }, [tasks, currentUser.id, todayStr]);
 
-  // Logic 2: Scheduled Time Check (Multiple Times)
+  // Logic 2: Scheduled Time Check (Both Global and Task Specific)
   useEffect(() => {
       const checkScheduledNotification = () => {
-          if (scheduledTimes.length === 0) return;
-          
           const now = new Date();
           const currentHour = now.getHours();
           const currentMin = now.getMinutes();
           const todayDate = now.toISOString().split('T')[0];
           
-          // Reset tracker if day changed
+          // Reset trackers if day changed
           if (lastNotifiedDateRef.current !== todayDate) {
               lastNotifiedDateRef.current = todayDate;
               lastNotifiedTimeRef.current = null;
+              notifiedTaskIdsRef.current.clear();
           }
 
-          // Optimized Approach: Find the most recent passed schedule time
-          let latestPassedTime: string | null = null;
-          
-          // Sort times to be sure
-          const sortedTimes = [...scheduledTimes].sort();
+          // A. GLOBAL SCHEDULE CHECK
+          if (scheduledTimes.length > 0) {
+              let latestPassedTime: string | null = null;
+              const sortedTimes = [...scheduledTimes].sort();
+              for (const timeStr of sortedTimes) {
+                 const [h, m] = timeStr.split(':').map(Number);
+                 if ((currentHour > h) || (currentHour === h && currentMin >= m)) {
+                     latestPassedTime = timeStr;
+                 }
+              }
 
-          for (const timeStr of sortedTimes) {
-             const [h, m] = timeStr.split(':').map(Number);
-             // Trigger if hour is greater, OR same hour and minute is same or greater
-             if ((currentHour > h) || (currentHour === h && currentMin >= m)) {
-                 latestPassedTime = timeStr;
-             }
-          }
-
-          // Trigger logic
-          if (latestPassedTime && latestPassedTime !== lastNotifiedTimeRef.current) {
-              const pendingCount = myTasks.filter(t => !isTaskCompletedForDate(t, todayStr)).length;
-              if (pendingCount > 0) {
-                  const message = `Tienes ${pendingCount} tareas pendientes. ¡No olvides completarlas!`;
-                  sendSystemNotification(`Recordatorio ${latestPassedTime}`, message);
-                  
-                  if(navigator.vibrate) navigator.vibrate([100, 50, 100]);
-                  
-                  // Mark as handled so we don't repeat until next scheduled time passed
-                  lastNotifiedTimeRef.current = latestPassedTime; 
+              if (latestPassedTime && latestPassedTime !== lastNotifiedTimeRef.current) {
+                  const pendingCount = myTasks.filter(t => !isTaskCompletedForDate(t, todayStr)).length;
+                  if (pendingCount > 0) {
+                      const message = `Tienes ${pendingCount} tareas pendientes. ¡No olvides completarlas!`;
+                      sendSystemNotification(`Recordatorio ${latestPassedTime}`, message);
+                      if(navigator.vibrate) navigator.vibrate([100, 50, 100]);
+                      lastNotifiedTimeRef.current = latestPassedTime; 
+                  }
               }
           }
+
+          // B. SPECIFIC TASK SCHEDULE CHECK
+          myTasks.forEach(task => {
+              if (task.notificationTime && !isTaskCompletedForDate(task, todayStr)) {
+                  const notifKey = `${task.id}-${todayDate}`;
+                  if (notifiedTaskIdsRef.current.has(notifKey)) return;
+
+                  const [tH, tM] = task.notificationTime.split(':').map(Number);
+                  
+                  // Check if current time matches target time (within same minute)
+                  if (currentHour === tH && currentMin === tM) {
+                       sendSystemNotification("Recordatorio de Tarea", `Hora de realizar: "${task.title}"`);
+                       if(navigator.vibrate) navigator.vibrate([200, 200, 200]);
+                       notifiedTaskIdsRef.current.add(notifKey);
+                  }
+              }
+          });
       };
 
       // Check every minute
@@ -245,7 +262,12 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUse
                   </button>
                   
                   <div className="flex-1 min-w-0">
-                      <p className={`font-semibold text-gray-900 truncate ${isCompleted ? 'line-through text-gray-400' : ''}`}>{task.title}</p>
+                      <div className="flex items-center gap-2">
+                        <p className={`font-semibold text-gray-900 truncate ${isCompleted ? 'line-through text-gray-400' : ''}`}>{task.title}</p>
+                        {task.notificationTime && !isCompleted && (
+                            <span className="text-[10px] font-mono text-gray-400 bg-gray-50 px-1 rounded border border-gray-100">{task.notificationTime}</span>
+                        )}
+                      </div>
                   </div>
               </div>
               

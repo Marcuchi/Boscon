@@ -26,6 +26,9 @@ export interface Task {
   repeatDays?: number[]; 
   scheduledDate?: string; 
   
+  // Specific notification time for this task (Format HH:MM)
+  notificationTime?: string;
+  
   lastCompletedDate: string | null; // ISO Date string YYYY-MM-DD
   createdAt: number;
 }

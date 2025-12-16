@@ -10,7 +10,6 @@ interface AdminDashboardProps {
 }
 
 // --- UI COMPONENTS ---
-// (Mismos componentes de UI Button y Modal, mantenidos por consistencia)
 interface ButtonProps { 
     children: React.ReactNode; 
     onClick?: () => void; 
@@ -82,6 +81,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDescription, setNewTaskDescription] = useState('');
+  const [newTaskTime, setNewTaskTime] = useState(''); // New State for specific time
   const [taskFrequency, setTaskFrequency] = useState<TaskFrequency>('DAILY');
   const [selectedDays, setSelectedDays] = useState<number[]>([]); 
   const [broadcastMessage, setBroadcastMessage] = useState('');
@@ -218,6 +218,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
         assignedToUserId: selectedUser.id,
         frequency: taskFrequency,
         repeatDays: finalRepeatDays,
+        notificationTime: newTaskTime || undefined, // Save specific time
         // scheduledDate se asigna condicionalmente abajo para evitar undefined
         lastCompletedDate: editingTask ? editingTask.lastCompletedDate : null,
         createdAt: editingTask ? editingTask.createdAt : Date.now()
@@ -326,6 +327,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
       setEditingTask(task);
       setNewTaskTitle(task.title);
       setNewTaskDescription(task.description || '');
+      setNewTaskTime(task.notificationTime || ''); // Load existing time
       setTaskFrequency(task.frequency);
       const mapJsToUiDay = (jsIdx: number) => jsIdx === 0 ? 6 : jsIdx - 1;
       setSelectedDays((task.repeatDays || []).map(mapJsToUiDay));
@@ -399,6 +401,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                             {isCompleted ? <><span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>Hecho</> : <><span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>Pendiente</>}
                         </span>
                         <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{task.frequency === 'DAILY' ? 'Diaria' : 'Semanal'}</span>
+                        {task.notificationTime && (
+                           <span className="text-[10px] font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 flex items-center gap-1">
+                               <BellIcon className="w-3 h-3" /> {task.notificationTime}
+                           </span>
+                        )}
                     </div>
                     <h4 className={`text-sm font-semibold text-gray-900 break-words leading-tight ${isCompleted ? 'text-gray-500' : ''}`}>{task.title}</h4>
                 </div>
@@ -488,7 +495,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
                     <div className="hidden md:flex justify-between items-center">
                         <div><h2 className="text-2xl font-bold text-gray-900">{selectedUser.name}</h2><p className="text-gray-500">{selectedUser.position || 'Miembro del equipo'}</p></div>
                         <div className="flex gap-2">
-                             <Button onClick={() => { setEditingTask(null); setNewTaskTitle(''); setNewTaskDescription(''); setTaskFrequency('DAILY'); setSelectedDays([]); setShowAddModal(true); }}>Nueva Tarea</Button>
+                             <Button onClick={() => { setEditingTask(null); setNewTaskTitle(''); setNewTaskDescription(''); setNewTaskTime(''); setTaskFrequency('DAILY'); setSelectedDays([]); setShowAddModal(true); }}>Nueva Tarea</Button>
                              <button onClick={() => setShowEmployeeMenu(true)} className="p-3 bg-white border border-gray-200 rounded-xl hover:bg-gray-50"><EllipsisHorizontalIcon className="w-5 h-5 text-gray-600" /></button>
                         </div>
                     </div>
@@ -527,7 +534,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
             )}
             
             {/* FAB Mobile */}
-            {selectedUser && (<div className="md:hidden absolute bottom-6 right-6"><button onClick={() => { setEditingTask(null); setNewTaskTitle(''); setNewTaskDescription(''); setTaskFrequency('DAILY'); setSelectedDays([]); setShowAddModal(true); }} className="w-14 h-14 bg-blue-600 rounded-full text-white shadow-xl shadow-blue-600/40 flex items-center justify-center active:scale-90 transition-transform"><PlusIcon className="w-7 h-7" /></button></div>)}
+            {selectedUser && (<div className="md:hidden absolute bottom-6 right-6"><button onClick={() => { setEditingTask(null); setNewTaskTitle(''); setNewTaskDescription(''); setNewTaskTime(''); setTaskFrequency('DAILY'); setSelectedDays([]); setShowAddModal(true); }} className="w-14 h-14 bg-blue-600 rounded-full text-white shadow-xl shadow-blue-600/40 flex items-center justify-center active:scale-90 transition-transform"><PlusIcon className="w-7 h-7" /></button></div>)}
         </main>
 
         {/* --- MODALS (Code retained from previous logic, wrapping form state) --- */}
@@ -555,6 +562,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser, onL
              <div className="space-y-5">
                  <div><label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Título</label><input type="text" value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all" placeholder="Ej. Limpiar vidrios" /></div>
                  <div><label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Descripción</label><textarea value={newTaskDescription} onChange={e => setNewTaskDescription(e.target.value)} className="w-full mt-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all h-24 resize-none" placeholder="Detalles adicionales..." /></div>
+                 
+                 {/* NEW TIME INPUT */}
+                 <div>
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Hora de Recordatorio (Opcional)</label>
+                    <div className="flex items-center gap-2 mt-1">
+                        <div className="relative flex-1">
+                            <input 
+                                type="time" 
+                                value={newTaskTime} 
+                                onChange={e => setNewTaskTime(e.target.value)} 
+                                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                            />
+                            <div className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none">
+                                <BellIcon className="w-5 h-5" />
+                            </div>
+                        </div>
+                        {newTaskTime && (
+                            <button onClick={() => setNewTaskTime('')} className="p-3 bg-gray-100 rounded-xl hover:bg-gray-200 text-gray-500" title="Borrar hora">
+                                <XMarkIcon className="w-5 h-5" />
+                            </button>
+                        )}
+                    </div>
+                 </div>
+
                  <div className="bg-gray-100 p-1 rounded-xl flex"><button onClick={() => setTaskFrequency('DAILY')} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${taskFrequency === 'DAILY' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>Diaria</button><button onClick={() => setTaskFrequency('WEEKLY')} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${taskFrequency === 'WEEKLY' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>Semanal</button></div>
                  <div className={`transition-all duration-300 ${taskFrequency === 'WEEKLY' ? 'opacity-40 grayscale' : 'opacity-100'}`}>
                      {taskFrequency === 'WEEKLY' ? (<div className="text-center p-4 bg-blue-50 text-blue-800 rounded-xl border border-blue-100"><p className="text-sm font-semibold">Tarea de una sola vez</p><p className="text-xs mt-1 opacity-80">Visible solo durante la semana actual.</p></div>) : (<><label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 block">Días de Repetición</label><div className="grid grid-cols-7 gap-2">{WEEKDAYS_HEADER.map((d, i) => { const isActive = selectedDays.includes(i); return (<button key={i} onClick={() => toggleDay(i)} className={`aspect-square rounded-full flex items-center justify-center text-xs sm:text-sm font-bold transition-all duration-200 ${isActive ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30 scale-100' : 'bg-gray-100 text-gray-400 hover:bg-gray-200 scale-95'}`}>{d}</button>) })}</div><p className="text-[10px] text-gray-400 mt-2 text-center h-4 font-medium transition-all">{getSelectionLabel()}</p></>)}
